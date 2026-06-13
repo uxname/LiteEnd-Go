@@ -5,14 +5,19 @@ pre-commit:
       run: bash -c 'if command -v gitleaks >/dev/null 2>&1; then gitleaks detect --source . -v --no-banner; fi'
     fmt:
       glob: "*.go"
-      run: go run mvdan.cc/gofumpt -l -w {staged_files} && git add {staged_files}
+      # gci import order (golangci) + gofumpt grouping, then re-stage.
+      run: go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint fmt {staged_files} && go tool mvdan.cc/gofumpt -w {staged_files} && git add {staged_files}
     lint:
-      run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint run
+      glob: "*.go"
+      # Lint only the staged files (fast); the full run lives in pre-push.
+      run: go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run {staged_files}
 
 pre-push:
   parallel: false
   commands:
     lint:
-      run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint run
+      run: go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run
+    vuln:
+      run: go tool golang.org/x/vuln/cmd/govulncheck ./...
     test:
-      run: go test ./...
+      run: go test -race -count=1 -shuffle=on ./...

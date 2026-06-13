@@ -10,6 +10,29 @@ tasks:
       - task --list
     silent: true
 
+  setup:
+    desc: One-command onboarding for a fresh clone (env, hooks, codegen, deps DB)
+    cmds:
+      - cmd: cp -n .env.example .env || true
+        silent: true
+      - go tool github.com/bokwoon95/wgo version >/dev/null 2>&1 || true
+      - lefthook install || echo "lefthook not installed; run 'go install github.com/evilmartians/lefthook@latest'"
+      - task: gen
+      - docker compose up -d db redis
+      - task: migrate
+      - echo "Setup done. Start the app with hot-reload via 'task dev'."
+
+  dev:
+    desc: Run the server locally with hot-reload (wgo) against the compose DB+Redis
+    cmds:
+      - docker compose up -d db redis
+      - go tool github.com/bokwoon95/wgo run ./cmd/server
+
+  run:
+    desc: Run the server locally (no hot-reload)
+    cmds:
+      - go run ./cmd/server
+
   gen:
     desc: Run all code generators (sqlc, gqlgen) and format the output
     cmds:
@@ -20,12 +43,18 @@ tasks:
   gen:sqlc:
     desc: Generate type-safe DB access from db/queries
     cmds:
-      - go run github.com/sqlc-dev/sqlc/cmd/sqlc generate
+      - go tool github.com/sqlc-dev/sqlc/cmd/sqlc generate
 
   gen:gqlgen:
     desc: Generate GraphQL server code from schema
     cmds:
-      - go run github.com/99designs/gqlgen generate
+      - go tool github.com/99designs/gqlgen generate
+
+  gen:check:
+    desc: Fail if generated code is stale (CI guard)
+    cmds:
+      - task: gen
+      - git diff --exit-code || (echo "Generated code is stale — run 'task gen' and commit" && exit 1)
 
   build:
     desc: Build all binaries into ./bin
@@ -37,25 +66,41 @@ tasks:
       LDFLAGS:
         sh: 'echo "-X {{.PKG}}/internal/version.Commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown) -X {{.PKG}}/internal/version.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"'
 
-  run:
-    desc: Run the server locally
-    cmds:
-      - go run ./cmd/server
-
   lint:
     desc: Run golangci-lint
     cmds:
-      - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint run
+      - go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run
+
+  lint:fix:
+    desc: Run golangci-lint with autofixes
+    cmds:
+      - go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run --fix
 
   fmt:
-    desc: Format code with gofumpt
+    desc: Format code (gci import order + gofumpt)
     cmds:
-      - go run mvdan.cc/gofumpt -w .
+      - go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint fmt
+      - go tool mvdan.cc/gofumpt -w .
+
+  fmt:check:
+    desc: Fail if any file is not gofumpt-formatted (CI guard)
+    cmds:
+      - test -z "$(go tool mvdan.cc/gofumpt -l .)" || (go tool mvdan.cc/gofumpt -l . && echo "Unformatted files — run 'task fmt'" && exit 1)
+
+  vuln:
+    desc: Scan for known vulnerabilities (Go vuln DB)
+    cmds:
+      - go tool golang.org/x/vuln/cmd/govulncheck ./...
 
   test:
     desc: Run unit tests
     cmds:
       - go test -race ./...
+
+  test:watch:
+    desc: Re-run unit tests on every .go change (wgo)
+    cmds:
+      - go tool github.com/bokwoon95/wgo -file '.go$' go test -race ./...
 
   test:cov:
     desc: Run tests with coverage report
@@ -69,13 +114,37 @@ tasks:
       - go test -race -tags=integration ./...
 
   migrate:
-    desc: Apply database migrations with goose
+    desc: Apply database migrations with goose (URL built from DATABASE_* in .env)
+    dotenv: ['.env']
     cmds:
-      - go run github.com/pressly/goose/v3/cmd/goose -dir db/migrations postgres "{{.DATABASE_URL}}" up
+      - go tool github.com/pressly/goose/v3/cmd/goose -dir db/migrations postgres "postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}?sslmode=disable" up
+
+  db:reset:
+    desc: Drop and recreate the dev database (DESTROYS local DB data)
+    cmds:
+      - docker compose down -v db
+      - docker compose up -d db
+      - sleep 3
+      - task: migrate
+
+  migration:create:
+    desc: "Create a new goose migration (usage: task migration:create name=add_x)"
     requires:
-      vars: [DATABASE_URL]
+      vars: [name]
+    cmds:
+      - go tool github.com/pressly/goose/v3/cmd/goose -dir db/migrations create {{.name}} sql
+
+  mod:verify:
+    desc: Verify module checksums
+    cmds:
+      - go mod verify
 
   tidy:
     desc: Tidy go modules
     cmds:
       - go mod tidy
+
+  clean:
+    desc: Remove build artifacts and coverage output (keeps ./data)
+    cmds:
+      - rm -rf {{.BIN}} coverage.out

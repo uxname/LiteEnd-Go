@@ -21,6 +21,12 @@ import (
 )
 
 func main() {
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "liteend-go server (version %s, commit %s)\n\n", version.AppVersion, version.Commit)
+		fmt.Fprintf(os.Stderr, "Usage: server [flags]\n\n")
+		fmt.Fprintf(os.Stderr, "Configuration is read from environment variables / .env (see .env.example).\n\nFlags:\n")
+		flag.PrintDefaults()
+	}
 	healthFlag := flag.Bool("healthcheck", false, "probe /health and exit (for container HEALTHCHECK)")
 	flag.Parse()
 	if *healthFlag {
