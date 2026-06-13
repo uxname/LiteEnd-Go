@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/uxname/liteend-go/internal/auth"
 	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/db"
@@ -61,10 +63,6 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	app.cleanup = append(app.cleanup, func() { _ = rdb.Close() })
 
 	srv := server.New(cfg, log, rdb.Raw())
-	r := srv.Router()
-
-	// Health.
-	r.Get("/health", health.New(database, rdb).Handler())
 
 	// Domain services.
 	profiles := profile.New(database.Queries, rdb, log)
@@ -101,15 +99,62 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 		Log:      log,
 	}
 	gqlHandler := graph.NewHandler(res, authMW, log)
-	r.With(translator.Middleware, authMW.Optional).Handle("/graphql", gqlHandler)
-
-	// File upload (REST).
 	uploadH := upload.NewHandler(upload.New(database.Queries, log))
-	uploadH.Register(r, authMW.RequireAuth)
+
+	mountRoutes(srv.Router(), routeDeps{
+		health:     health.New(database, rdb).Handler(),
+		graphql:    gqlHandler,
+		graphqlMW:  []func(http.Handler) http.Handler{translator.Middleware, authMW.Optional},
+		upload:     uploadH,
+		uploadAuth: authMW.RequireAuth,
+		devAuth:    appmw.BasicAuth("liteend dev tools", cfg.AdminUser, cfg.AdminPassword),
+		devLinks:   devLinks(cfg),
+	})
+
+	app.Server = srv
+	return app, nil
+}
+
+// routeDeps carries the handlers and middleware that mountRoutes needs. It
+// decouples route topology from dependency wiring, so the route set can be
+// enumerated in a test (against the OpenAPI spec) without live DB/Redis.
+type routeDeps struct {
+	health     http.Handler
+	graphql    http.Handler
+	graphqlMW  []func(http.Handler) http.Handler
+	upload     *upload.Handler
+	uploadAuth func(http.Handler) http.Handler
+	devAuth    func(http.Handler) http.Handler
+	devLinks   []devtools.Link
+}
+
+// mountRoutes registers every HTTP route. This is the single source of truth
+// for the app's route topology (Build and the route-sync test both use it).
+func mountRoutes(r chi.Router, d routeDeps) {
+	// Public REST endpoints (documented in openapi.yaml).
+	r.Get("/health", d.health.ServeHTTP)
+	d.upload.Register(r, d.uploadAuth) // POST /upload, GET /uploads/*
+
+	// GraphQL (POST + WS).
+	r.With(d.graphqlMW...).Handle("/graphql", d.graphql)
 
 	// Dev tools & API docs. These pages load CDN assets + inline scripts, so they
-	// run under a relaxed CSP (the strict policy still applies to the API).
-	devLinks := []devtools.Link{
+	// run under a relaxed CSP (the strict policy still applies to the API), and
+	// require Basic Auth — no anonymous access.
+	r.With(d.devAuth, devtools.RelaxCSP).Get("/playground", graph.Playground("/graphql"))
+	r.With(d.devAuth, devtools.RelaxCSP).Get("/dev", devtools.DevLauncher(d.devLinks))
+	r.With(d.devAuth, devtools.RelaxCSP).Get("/swagger", devtools.SwaggerUI("/openapi.yaml"))
+	r.With(d.devAuth).Get("/openapi.yaml", devtools.OpenAPISpec())
+
+	// Silence the browser's automatic favicon request.
+	r.Get("/favicon.ico", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
+// devLinks builds the links shown on the /dev launcher page.
+func devLinks(cfg *config.Config) []devtools.Link {
+	return []devtools.Link{
 		{Title: "GraphQL Playground", Desc: "Explore & run GraphQL queries/subscriptions", URL: "/playground"},
 		{Title: "Swagger / OpenAPI", Desc: "REST API reference", URL: "/swagger"},
 		{Title: "Health", Desc: "Liveness of DB, Redis & memory", URL: "/health"},
@@ -117,21 +162,6 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 		{Title: "RedisInsight", Desc: "Inspect Redis keys & streams", URL: localhostURL(cfg.RedisStudioPort)},
 		{Title: "Asynqmon (queue dashboard)", Desc: "Background jobs — Bull Board analog", URL: localhostURL(cfg.AsynqmonPort)},
 	}
-	// Dev pages require Basic Auth — no anonymous access (same creds as the
-	// external dashboards behind the auth proxy).
-	devAuth := appmw.BasicAuth("liteend dev tools", cfg.AdminUser, cfg.AdminPassword)
-	r.With(devAuth, devtools.RelaxCSP).Get("/playground", graph.Playground("/graphql"))
-	r.With(devAuth, devtools.RelaxCSP).Get("/dev", devtools.DevLauncher(devLinks))
-	r.With(devAuth, devtools.RelaxCSP).Get("/swagger", devtools.SwaggerUI("/openapi.json"))
-	r.With(devAuth).Get("/openapi.json", devtools.OpenAPISpec())
-
-	// Silence the browser's automatic favicon request.
-	r.Get("/favicon.ico", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	})
-
-	app.Server = srv
-	return app, nil
 }
 
 // localhostURL builds a browser-reachable URL for a companion service that is

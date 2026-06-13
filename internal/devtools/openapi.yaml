@@ -1,0 +1,57 @@
+# OpenAPI spec for the REST surface. GraphQL lives at /graphql (see the
+# playground). Keep this in sync with the routes registered in
+# internal/app/app.go — TestOpenAPISpecMatchesRoutes enforces it in CI.
+openapi: "3.0.3"
+
+info:
+  title: LiteEnd-Go API
+  version: "0.0.1"
+  description: REST endpoints. GraphQL is at /graphql.
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        "200": { description: OK }
+        "503": { description: Unhealthy }
+
+  /upload:
+    post:
+      summary: Upload image files
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "201": { description: Files uploaded }
+        "400": { description: Bad request }
+        "401": { description: Unauthorized }
+
+  /uploads/{path}:
+    get:
+      summary: Serve an uploaded file
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200": { description: File }
+        "403": { description: Forbidden }
+        "404": { description: Not found }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

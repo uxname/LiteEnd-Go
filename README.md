@@ -58,7 +58,7 @@ A links page for all of these is served at `/dev`.
 
 > **Admin auth — no anonymous access.** Every dashboard (pgweb, RedisInsight,
 > Asynqmon) sits behind a Caddy Basic-Auth proxy, and the app's own dev pages
-> (`/dev`, `/playground`, `/swagger`, `/openapi.json`) require the same
+> (`/dev`, `/playground`, `/swagger`, `/openapi.yaml`) require the same
 > credentials. Defaults: `admin` / `admin` (`ADMIN_USER` / `ADMIN_PASSWORD`; the
 > proxy also needs `ADMIN_PASSWORD_HASH`). Change them before any non-local use.
 > Public endpoints (`/graphql`, `/upload`, `/uploads/*`, `/health`) stay open.
@@ -141,7 +141,7 @@ docker-compose.yml
 - **GraphQL:** `POST /graphql` (and `GET` for the playground at `/playground`).
   Subscriptions over WebSocket at the same endpoint using the
   `graphql-transport-ws` subprotocol.
-- **OpenAPI / Swagger UI:** `/swagger` (spec at `/openapi.json`).
+- **OpenAPI / Swagger UI:** `/swagger` (spec at `/openapi.yaml`).
 - **Queue dashboard:** Asynqmon (separate container, `:5300`).
 
 ## Testing

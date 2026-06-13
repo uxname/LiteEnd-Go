@@ -6,6 +6,7 @@ require (
 	github.com/99designs/gqlgen v0.17.91
 	github.com/caarlos0/env/v11 v11.4.1
 	github.com/coreos/go-oidc/v3 v3.18.0
+	github.com/getkin/kin-openapi v0.140.0
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-chi/cors v1.2.2
 	github.com/go-redis/redis_rate/v10 v10.0.1
@@ -125,6 +126,8 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/go-openapi/jsonpointer v0.22.5 // indirect
+	github.com/go-openapi/swag/jsonname v0.25.5 // indirect
 	github.com/go-sql-driver/mysql v1.9.3 // indirect
 	github.com/go-toolsmith/astcast v1.1.0 // indirect
 	github.com/go-toolsmith/astcopy v1.1.0 // indirect
@@ -228,6 +231,8 @@ require (
 	github.com/nishanths/exhaustive v0.12.0 // indirect
 	github.com/nishanths/predeclared v0.2.2 // indirect
 	github.com/nunnatsa/ginkgolinter v0.23.0 // indirect
+	github.com/oasdiff/yaml v0.1.0 // indirect
+	github.com/oasdiff/yaml3 v0.0.13 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/paulmach/orb v0.13.0 // indirect

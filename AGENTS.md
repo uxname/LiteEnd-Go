@@ -50,6 +50,10 @@ This is the Go port of the LiteEnd backend. Read this before changing code.
   in `internal/db/enums.go` so pgx can decode arrays.
 - **A background job:** define a task type + handler in `internal/queue`, register
   it in the worker mux.
+- **A REST route:** add it in `mountRoutes` (`internal/app/app.go`) AND document it
+  in `internal/devtools/openapi.yaml`. `TestOpenAPISpecMatchesRoutes` fails if the
+  route and the spec drift apart (or methods mismatch); a non-REST/dev route goes
+  in that test's `devRoutes` allowlist.
 - **A translation:** add the key to both `internal/i18n/locales/en.json` and
   `ru.json` (go-i18n format, `{{.placeholder}}`).
 
@@ -69,7 +73,7 @@ This is the Go port of the LiteEnd backend. Read this before changing code.
   RedisInsight, Asynqmon) are exposed *only* through the Caddy Basic-Auth proxy
   (`admin_proxy` in compose, `Caddyfile`) — never publish their container ports
   directly. The app's dev pages (`/dev`, `/playground`, `/swagger`,
-  `/openapi.json`) are wrapped with `middleware.BasicAuth` using `ADMIN_USER` /
+  `/openapi.yaml`) are wrapped with `middleware.BasicAuth` using `ADMIN_USER` /
   `ADMIN_PASSWORD`. If you add a new dashboard, put it behind the proxy too.
 - Credentials: `ADMIN_USER` / `ADMIN_PASSWORD` (Go side) and `ADMIN_PASSWORD_HASH`
   (bcrypt, for Caddy — escape `$` as `$$` in `.env`). Keep all three in sync.

@@ -3,9 +3,20 @@
 package devtools
 
 import (
+	_ "embed"
 	"net/http"
 	"strings"
 )
+
+// openapiSpec is the REST API contract, embedded from openapi.yaml so it can be
+// edited as a real YAML file (IDE highlighting, validation, clean diffs) and
+// guarded against route drift by a test.
+//
+//go:embed openapi.yaml
+var openapiSpec []byte
+
+// OpenAPISpecBytes returns the raw embedded OpenAPI document (used by tests).
+func OpenAPISpecBytes() []byte { return openapiSpec }
 
 // devCSP allows the CDN-hosted assets and inline scripts/styles that the
 // GraphQL playground and Swagger UI need. It is applied ONLY to those dev-tool
@@ -79,26 +90,13 @@ func SwaggerUI(specURL string) http.HandlerFunc {
 	}
 }
 
-// OpenAPISpec serves a hand-written OpenAPI 3 document for the REST surface.
-// (The REST surface is intentionally tiny; a full swaggo codegen pipeline is
-// unnecessary overhead for three endpoints.)
+// OpenAPISpec serves the embedded OpenAPI 3 document (YAML). Swagger UI loads
+// YAML natively. The REST surface is intentionally tiny, so the spec is a
+// hand-maintained artifact (kept honest by a route-sync test) rather than a
+// swaggo codegen pipeline.
 func OpenAPISpec() http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(openapiJSON))
+		w.Header().Set("Content-Type", "application/yaml")
+		_, _ = w.Write(openapiSpec)
 	}
 }
-
-const openapiJSON = `{
-  "openapi": "3.0.3",
-  "info": {"title": "LiteEnd-Go API", "version": "0.0.1", "description": "REST endpoints. GraphQL is at /graphql."},
-  "paths": {
-    "/health": {"get": {"summary": "Health check", "responses": {"200": {"description": "OK"}, "503": {"description": "Unhealthy"}}}},
-    "/upload": {"post": {"summary": "Upload image files", "security": [{"bearerAuth": []}],
-      "requestBody": {"content": {"multipart/form-data": {"schema": {"type": "object", "properties": {"file": {"type": "string", "format": "binary"}}}}}},
-      "responses": {"201": {"description": "Files uploaded"}, "400": {"description": "Bad request"}, "401": {"description": "Unauthorized"}}}},
-    "/uploads/{path}": {"get": {"summary": "Serve an uploaded file", "parameters": [{"name": "path", "in": "path", "required": true, "schema": {"type": "string"}}],
-      "responses": {"200": {"description": "File"}, "403": {"description": "Forbidden"}, "404": {"description": "Not found"}}}}
-  },
-  "components": {"securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}}}
-}`
