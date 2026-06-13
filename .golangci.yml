@@ -123,6 +123,8 @@ linters:
           - funlen
           - gochecknoglobals
           - dupword
+          - noctx    # httptest.NewRequest is the idiomatic test API
+          - goconst  # repeated literals in tests aid readability
       # cmd entrypoints log fatally via the global logger before one is built.
       - path: cmd/
         linters:
