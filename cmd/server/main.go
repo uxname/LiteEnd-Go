@@ -39,9 +39,16 @@ func healthcheck() int {
 	if port == "" {
 		port = "4000"
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
-	//nolint:gosec // fixed localhost probe; port comes from our own env, not a request
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%s/health", port))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	url := fmt.Sprintf("http://127.0.0.1:%s/health", port)
+	//nolint:gosec // G704: fixed loopback probe; port comes from our own env, not user input
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "healthcheck failed:", err)
+		return 1
+	}
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: loopback probe, see above
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "healthcheck failed:", err)
 		return 1

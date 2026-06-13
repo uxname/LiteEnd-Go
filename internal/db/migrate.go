@@ -40,7 +40,7 @@ func Migrate(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			"attempt", attempt, "max", config.DBMaxRetries, "retry_in", delay.String())
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("waiting for database: %w", ctx.Err())
 		case <-time.After(delay):
 		}
 		if delay *= 2; delay > config.DBRetryMaxDelay {

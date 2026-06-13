@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -47,7 +48,7 @@ func (t *Tool) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("backup loop stopped: %w", ctx.Err())
 		case <-ticker.C:
 			if err := t.Backup(ctx); err != nil {
 				t.log.Error("scheduled backup failed", "error", err)
@@ -78,7 +79,7 @@ func (t *Tool) Backup(ctx context.Context) error {
 
 	args := []string{
 		"-h", t.cfg.DatabaseHost,
-		"-p", fmt.Sprintf("%d", t.cfg.DatabasePort),
+		"-p", strconv.Itoa(t.cfg.DatabasePort),
 		"-U", t.cfg.DatabaseUser,
 		"-d", t.cfg.DatabaseName,
 		"-F", format,
@@ -111,16 +112,19 @@ func (t *Tool) runDump(ctx context.Context, args []string, outFile string) error
 		gzip.Stderr = os.Stderr
 		pipe, err := dump.StdoutPipe()
 		if err != nil {
-			return err
+			return fmt.Errorf("pg_dump stdout pipe: %w", err)
 		}
 		gzip.Stdin = pipe
 		if err := gzip.Start(); err != nil {
-			return err
+			return fmt.Errorf("start gzip: %w", err)
 		}
 		if err := dump.Run(); err != nil {
 			return fmt.Errorf("pg_dump: %w", err)
 		}
-		return gzip.Wait()
+		if err := gzip.Wait(); err != nil {
+			return fmt.Errorf("gzip: %w", err)
+		}
+		return nil
 	}
 
 	dump.Stdout = out
@@ -175,37 +179,40 @@ func (t *Tool) Restore(ctx context.Context, fileName string) error {
 
 	psqlArgs := []string{
 		"-h", t.cfg.DatabaseHost,
-		"-p", fmt.Sprintf("%d", t.cfg.DatabasePort),
+		"-p", strconv.Itoa(t.cfg.DatabasePort),
 		"-U", t.cfg.DatabaseUser,
 		"-d", t.cfg.DatabaseName,
 	}
 
 	t.log.Info("restoring backup", "file", path)
 	if strings.HasSuffix(fileName, ".gz") {
-		gunzip := exec.CommandContext(ctx, "gunzip", "-c", path) //nolint:gosec
-		psql := exec.CommandContext(ctx, "psql", psqlArgs...)    //nolint:gosec
+		gunzip := exec.CommandContext(ctx, "gunzip", "-c", path) //nolint:gosec // path is under the configured backup dir
+		psql := exec.CommandContext(ctx, "psql", psqlArgs...)    //nolint:gosec // args from config
 		psql.Env = append(os.Environ(), "PGPASSWORD="+t.cfg.DatabasePassword)
 		psql.Stderr = os.Stderr
 		pipe, err := gunzip.StdoutPipe()
 		if err != nil {
-			return err
+			return fmt.Errorf("gunzip stdout pipe: %w", err)
 		}
 		psql.Stdin = pipe
 		if err := psql.Start(); err != nil {
-			return err
+			return fmt.Errorf("start psql: %w", err)
 		}
 		if err := gunzip.Run(); err != nil {
 			return fmt.Errorf("gunzip: %w", err)
 		}
-		return psql.Wait()
+		if err := psql.Wait(); err != nil {
+			return fmt.Errorf("psql restore: %w", err)
+		}
+		return nil
 	}
 
-	in, err := os.Open(path) //nolint:gosec
+	in, err := os.Open(path) //nolint:gosec // path is under the configured backup dir
 	if err != nil {
-		return err
+		return fmt.Errorf("open backup file: %w", err)
 	}
 	defer func() { _ = in.Close() }()
-	psql := exec.CommandContext(ctx, "psql", psqlArgs...) //nolint:gosec
+	psql := exec.CommandContext(ctx, "psql", psqlArgs...) //nolint:gosec // args from config
 	psql.Env = append(os.Environ(), "PGPASSWORD="+t.cfg.DatabasePassword)
 	psql.Stdin = in
 	psql.Stderr = os.Stderr

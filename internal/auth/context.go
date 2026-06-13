@@ -17,7 +17,7 @@ var ErrForbidden = errors.New("forbidden")
 
 type ctxKey struct{}
 
-var userKey ctxKey
+var userKey ctxKey //nolint:gochecknoglobals // unique context-key sentinel (idiomatic Go)
 
 // WithUser returns a copy of ctx carrying the authenticated profile.
 func WithUser(ctx context.Context, p *sqlc.Profile) context.Context {

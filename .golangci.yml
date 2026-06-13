@@ -2,34 +2,153 @@ version: "2"
 
 run:
   timeout: 5m
+  build-tags:
+    - integration
 
 linters:
   default: standard
   enable:
+    # --- correctness / resource safety ---
+    - bodyclose
+    - contextcheck
     - errcheck
+    - errchkjson
+    - errorlint
+    - forcetypeassert
+    - gosec
     - govet
     - ineffassign
+    - nilerr
+    - nilnil
+    - noctx
+    - rowserrcheck
+    - sqlclosecheck
     - staticcheck
     - unused
+    - wrapcheck
+    # --- slog / tests ---
+    - loggercheck
+    - paralleltest
+    - sloglint
+    - testifylint
+    - thelper
+    - tparallel
+    # --- style / performance / idioms ---
+    - copyloopvar
+    - dupword
+    - gochecknoglobals
+    - gochecknoinits
+    - gocritic
+    - goconst
+    - godot
+    - intrange
     - misspell
+    - perfsprint
+    - predeclared
+    - reassign
     - revive
-    - bodyclose
-    - gosec
     - unconvert
     - unparam
+    - usestdlibvars
+    - wastedassign
+    - whitespace
+    # --- complexity gates ---
+    - cyclop
+    - funlen
+    - gocognit
+    - nestif
+
+  settings:
+    wrapcheck:
+      # Errors from our own packages are already wrapped where it matters;
+      # only require wrapping genuinely third-party errors.
+      ignore-package-globs:
+        - github.com/uxname/liteend-go/*
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+    exhaustive:
+      default-signifies-exhaustive: true
+    sloglint:
+      no-global: "all" # inject *slog.Logger; never use the package-global logger
+    cyclop:
+      max-complexity: 15
+    funlen:
+      lines: 80
+      statements: 50
+    gocognit:
+      min-complexity: 20
+    nestif:
+      min-complexity: 5
+    depguard:
+      rules:
+        # Layering: domain/infra packages must not depend on the transport
+        # layer (GraphQL, HTTP server, composition root). Dependencies point
+        # inward only.
+        domain-no-transport:
+          list-mode: lax
+          files:
+            - "**/internal/profile/**"
+            - "**/internal/upload/**"
+            - "**/internal/queue/**"
+            - "**/internal/auth/**"
+            - "**/internal/redis/**"
+            - "**/internal/db/**"
+            - "**/internal/i18n/**"
+            - "**/internal/health/**"
+            - "**/internal/backup/**"
+            - "**/internal/middleware/**"
+            - "**/internal/logger/**"
+            - "**/internal/config/**"
+          deny:
+            - pkg: github.com/uxname/liteend-go/internal/graph
+              desc: domain/infra must not depend on the GraphQL transport layer
+            - pkg: github.com/uxname/liteend-go/internal/server
+              desc: domain/infra must not depend on the HTTP server layer
+            - pkg: github.com/uxname/liteend-go/internal/app
+              desc: domain/infra must not depend on the composition root
+
   exclusions:
     rules:
-      # Generated code: relax noise.
-      - path: (internal/graph/generated|internal/db/sqlc)
+      # Generated code: relax everything.
+      - path: (internal/graph/generated|internal/db/sqlc|internal/graph/model)
         linters:
           - all
-      # Tests: allow gosec relaxations.
+      # Tests: allow gosec relaxations and constructs that don't matter in tests.
       - path: _test\.go
         linters:
           - gosec
           - unparam
+          - funlen
+          - gochecknoglobals
+          - dupword
+      # cmd entrypoints log fatally via the global logger before one is built.
+      - path: cmd/
+        linters:
+          - sloglint
+      # Integration tests share one Postgres/Redis + DB state across cases, so
+      # they must run sequentially — t.Parallel() would cause data races.
+      # Other relaxations are e2e-helper noise that doesn't affect test validity.
+      - path: ^test/
+        linters:
+          - paralleltest
+          - wrapcheck
+          - noctx
+          - forcetypeassert
+          - errcheck
+          - errchkjson
+          - bodyclose
+          - goconst
+          - sloglint
 
 formatters:
   enable:
     - gofumpt
-    - goimports
+    - gci
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/uxname/liteend-go)

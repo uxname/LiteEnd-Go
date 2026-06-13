@@ -60,6 +60,7 @@ func key(method, path string) string {
 }
 
 func TestOpenAPISpecIsValid(t *testing.T) {
+	t.Parallel()
 	// Task 3: the embedded spec must be a structurally valid OpenAPI 3 document,
 	// not merely valid YAML.
 	loader := openapi3.NewLoader()
@@ -69,6 +70,7 @@ func TestOpenAPISpecIsValid(t *testing.T) {
 }
 
 func TestOpenAPISpecMatchesRoutes(t *testing.T) {
+	t.Parallel()
 	// Parse the spec into a (METHOD path) set.
 	loader := openapi3.NewLoader()
 	doc, err := loader.LoadFromData(devtools.OpenAPISpecBytes())

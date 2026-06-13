@@ -7,6 +7,7 @@ import (
 )
 
 func TestDatabaseURL(t *testing.T) {
+	t.Parallel()
 	c := &Config{
 		DatabaseUser: "u", DatabasePassword: "p",
 		DatabaseHost: "h", DatabasePort: 5432, DatabaseName: "db",
@@ -15,11 +16,13 @@ func TestDatabaseURL(t *testing.T) {
 }
 
 func TestRedisAddr(t *testing.T) {
+	t.Parallel()
 	c := &Config{RedisHost: "redis", RedisPort: 6379}
 	require.Equal(t, "redis:6379", c.RedisAddr())
 }
 
 func TestIsProduction(t *testing.T) {
+	t.Parallel()
 	require.True(t, (&Config{Env: "production"}).IsProduction())
 	require.False(t, (&Config{Env: "development"}).IsProduction())
 }

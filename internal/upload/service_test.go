@@ -28,6 +28,7 @@ func newSvc(t *testing.T) *Service {
 }
 
 func TestAllowedMime(t *testing.T) {
+	t.Parallel()
 	require.True(t, AllowedMime("image/png"))
 	require.True(t, AllowedMime("image/jpeg"))
 	require.True(t, AllowedMime("image/gif"))
@@ -37,13 +38,15 @@ func TestAllowedMime(t *testing.T) {
 }
 
 func TestProcessFile_RejectsDisallowedMime(t *testing.T) {
+	t.Parallel()
 	s := newSvc(t)
 	f, err := s.ProcessFile(context.Background(), "x.txt", "text/plain", strings.NewReader("hi"))
-	require.NoError(t, err)
-	require.Nil(t, f, "non-image must be rejected (nil)")
+	require.ErrorIs(t, err, ErrDisallowedMime, "non-image must be rejected")
+	require.Nil(t, f)
 }
 
 func TestProcessFile_WritesImage(t *testing.T) {
+	t.Parallel()
 	s := newSvc(t)
 	f, err := s.ProcessFile(context.Background(), "pic.png", "image/png", strings.NewReader("\x89PNGdata"))
 	require.NoError(t, err)
@@ -57,6 +60,7 @@ func TestProcessFile_WritesImage(t *testing.T) {
 }
 
 func TestSafeFileInfo_PathTraversalBlocked(t *testing.T) {
+	t.Parallel()
 	s := newSvc(t)
 	// The path is clamped under the upload root (filepath.Clean), so a host file
 	// is never reachable: the result is an error (Forbidden or NotFound), and the
@@ -67,12 +71,14 @@ func TestSafeFileInfo_PathTraversalBlocked(t *testing.T) {
 }
 
 func TestSafeFileInfo_NotFound(t *testing.T) {
+	t.Parallel()
 	s := newSvc(t)
 	_, _, err := s.SafeFileInfo("2026/06/13/12-00/missing.png")
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestSafeFileInfo_Valid(t *testing.T) {
+	t.Parallel()
 	s := newSvc(t)
 	f, err := s.ProcessFile(context.Background(), "ok.png", "image/png", strings.NewReader("data"))
 	require.NoError(t, err)

@@ -60,12 +60,12 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 		// Enforce per-file size limit (read at most max+1 to detect overflow).
 		limited := io.LimitReader(part, config.UploadMaxFileSize+1)
 		f, err := h.svc.ProcessFile(r.Context(), part.FileName(), part.Header.Get("Content-Type"), limited)
+		if errors.Is(err, ErrDisallowedMime) {
+			continue // skip non-image parts
+		}
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "Failed to process file")
 			return
-		}
-		if f == nil {
-			continue // disallowed mime type
 		}
 		if f.size > config.UploadMaxFileSize {
 			writeErr(w, http.StatusBadRequest, "File too large")
@@ -84,9 +84,21 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body, err := json.Marshal(saved)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "Failed to encode response")
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(saved)
+	_, _ = w.Write(body)
+}
+
+// errorResponse is the JSON body for error replies. It uses only int+string
+// fields so json encoding cannot fail (keeps errchkjson satisfied).
+type errorResponse struct {
+	StatusCode int    `json:"statusCode"`
+	Message    string `json:"message"`
 }
 
 func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
@@ -108,9 +120,15 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeErr(w http.ResponseWriter, code int, msg string) {
+	body, err := json.Marshal(errorResponse{StatusCode: code, Message: msg})
+	if err != nil {
+		// Unreachable for a scalar-only struct, but keeps the encoding honest.
+		http.Error(w, msg, code)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(map[string]any{"statusCode": code, "message": msg})
+	_, _ = w.Write(body)
 }
 
 func clientIP(r *http.Request) string {

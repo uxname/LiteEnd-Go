@@ -44,7 +44,12 @@ func NewClient(rdb redis.UniversalClient, log *slog.Logger) *Client {
 }
 
 // Close releases the underlying asynq client.
-func (c *Client) Close() error { return c.client.Close() }
+func (c *Client) Close() error {
+	if err := c.client.Close(); err != nil {
+		return fmt.Errorf("close queue client: %w", err)
+	}
+	return nil
+}
 
 // AddTestJob enqueues a test job, deduplicated by message for dedupTTL.
 func (c *Client) AddTestJob(ctx context.Context, message string) error {
@@ -53,7 +58,7 @@ func (c *Client) AddTestJob(ctx context.Context, message string) error {
 		Date:    time.Now().UTC().Format(time.RFC3339),
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal test job: %w", err)
 	}
 	task := asynq.NewTask(TaskTypeTest, payload)
 
@@ -94,7 +99,10 @@ func NewWorker(rdb redis.UniversalClient, log *slog.Logger) *Worker {
 func (w *Worker) Start() error {
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(TaskTypeTest, w.handleTest)
-	return w.srv.Start(mux)
+	if err := w.srv.Start(mux); err != nil {
+		return fmt.Errorf("start queue worker: %w", err)
+	}
+	return nil
 }
 
 // Stop gracefully shuts the worker down.

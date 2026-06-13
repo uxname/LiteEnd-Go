@@ -7,6 +7,7 @@ import (
 )
 
 func TestRedactVariables(t *testing.T) {
+	t.Parallel()
 	in := map[string]any{
 		"username":      "alice",
 		"password":      "hunter2",
@@ -21,5 +22,6 @@ func TestRedactVariables(t *testing.T) {
 }
 
 func TestRedactVariables_Nil(t *testing.T) {
+	t.Parallel()
 	require.Nil(t, redactVariables(nil))
 }

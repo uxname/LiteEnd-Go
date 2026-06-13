@@ -13,6 +13,12 @@ import (
 	"github.com/uxname/liteend-go/internal/config"
 )
 
+// Status values reported per check and overall.
+const (
+	statusOK    = "ok"
+	statusError = "error"
+)
+
 // Pinger is anything that can report its liveness.
 type Pinger interface {
 	Ping(ctx context.Context) error
@@ -53,16 +59,16 @@ func (c *Checker) Handler() http.HandlerFunc {
 
 		ok := true
 		for _, res := range checks {
-			if res.Status != "ok" {
+			if res.Status != statusOK {
 				ok = false
 				break
 			}
 		}
 
-		resp := response{Status: "ok", Checks: checks}
+		resp := response{Status: statusOK, Checks: checks}
 		code := http.StatusOK
 		if !ok {
-			resp.Status = "error"
+			resp.Status = statusError
 			code = http.StatusServiceUnavailable
 		}
 
@@ -74,12 +80,12 @@ func (c *Checker) Handler() http.HandlerFunc {
 
 func ping(ctx context.Context, p Pinger) checkResult {
 	if p == nil {
-		return checkResult{Status: "error", Error: "not configured"}
+		return checkResult{Status: statusError, Error: "not configured"}
 	}
 	if err := p.Ping(ctx); err != nil {
-		return checkResult{Status: "error", Error: err.Error()}
+		return checkResult{Status: statusError, Error: err.Error()}
 	}
-	return checkResult{Status: "ok"}
+	return checkResult{Status: statusOK}
 }
 
 func memoryCheck() checkResult {
@@ -87,7 +93,7 @@ func memoryCheck() checkResult {
 	runtime.ReadMemStats(&m)
 	heapMB := m.HeapAlloc / (1024 * 1024)
 	if heapMB > config.HeapThresholdMB {
-		return checkResult{Status: "error", Error: "heap usage above threshold"}
+		return checkResult{Status: statusError, Error: "heap usage above threshold"}
 	}
-	return checkResult{Status: "ok"}
+	return checkResult{Status: statusOK}
 }

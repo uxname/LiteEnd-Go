@@ -43,10 +43,20 @@ func New(ctx context.Context, cfg *config.Config) (*Client, error) {
 func (c *Client) Raw() *redis.Client { return c.rdb }
 
 // Close shuts down the client.
-func (c *Client) Close() error { return c.rdb.Close() }
+func (c *Client) Close() error {
+	if err := c.rdb.Close(); err != nil {
+		return fmt.Errorf("close redis: %w", err)
+	}
+	return nil
+}
 
 // Ping checks connectivity (used by the health endpoint).
-func (c *Client) Ping(ctx context.Context) error { return c.rdb.Ping(ctx).Err() }
+func (c *Client) Ping(ctx context.Context) error {
+	if err := c.rdb.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("ping redis: %w", err)
+	}
+	return nil
+}
 
 // GetString returns the cached string for key, or ErrCacheMiss if absent.
 func (c *Client) GetString(ctx context.Context, key string) (string, error) {

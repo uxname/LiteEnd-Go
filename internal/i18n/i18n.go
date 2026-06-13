@@ -6,6 +6,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -20,7 +21,7 @@ const defaultLang = "en"
 
 type ctxKey struct{}
 
-var langKey ctxKey
+var langKey ctxKey //nolint:gochecknoglobals // unique context-key sentinel (idiomatic Go)
 
 // Translator loads message bundles and resolves localized strings.
 type Translator struct {
@@ -35,7 +36,7 @@ func New(log *slog.Logger) (*Translator, error) {
 
 	for _, name := range []string{"locales/en.json", "locales/ru.json"} {
 		if _, err := bundle.LoadMessageFileFS(localesFS, name); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("load locale %q: %w", name, err)
 		}
 	}
 	return &Translator{bundle: bundle, log: log}, nil

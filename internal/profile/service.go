@@ -17,6 +17,10 @@ import (
 	"github.com/uxname/liteend-go/internal/db/sqlc"
 )
 
+// ErrProfileNotFound is returned by FindBySub when no profile exists for the
+// given OIDC subject (distinct from a real lookup error).
+var ErrProfileNotFound = errors.New("profile not found")
+
 // MockSub is the OIDC subject of the default development mock user.
 const MockSub = "mock-oidc-sub"
 
@@ -74,14 +78,15 @@ func (s *Service) FindOrCreateBySub(ctx context.Context, sub string) (sqlc.Profi
 	return p, nil
 }
 
-// FindBySub returns a profile by subject or nil if not found (cached).
+// FindBySub returns a profile by subject, or ErrProfileNotFound if none exists
+// (cached).
 func (s *Service) FindBySub(ctx context.Context, sub string) (*sqlc.Profile, error) {
 	if p, ok := s.fromCache(ctx, sub); ok {
 		return &p, nil
 	}
 	p, err := s.q.GetProfileByOIDCSub(ctx, sub)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
+		return nil, ErrProfileNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get profile: %w", err)

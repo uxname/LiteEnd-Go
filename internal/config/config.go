@@ -3,6 +3,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -75,7 +76,7 @@ func Load() (*Config, error) {
 	}
 
 	if cfg.OIDCMockEnabled && cfg.IsProduction() {
-		return nil, fmt.Errorf("OIDC_MOCK_ENABLED must not be true in production")
+		return nil, errors.New("OIDC_MOCK_ENABLED must not be true in production")
 	}
 
 	return cfg, nil

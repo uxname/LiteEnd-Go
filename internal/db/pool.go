@@ -55,5 +55,8 @@ func (d *DB) Close() {
 
 // Ping checks database connectivity (used by the health endpoint).
 func (d *DB) Ping(ctx context.Context) error {
-	return d.Pool.Ping(ctx)
+	if err := d.Pool.Ping(ctx); err != nil {
+		return fmt.Errorf("ping database: %w", err)
+	}
+	return nil
 }

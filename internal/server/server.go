@@ -82,8 +82,13 @@ func (s *Server) Run(ctx context.Context) error {
 		return err
 	case <-ctx.Done():
 		s.log.Info("shutting down server")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		// ctx is already cancelled (that's why we're here); detach its
+		// cancellation but keep its values, then give shutdown a fresh deadline.
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("server shutdown: %w", err)
+		}
+		return nil
 	}
 }

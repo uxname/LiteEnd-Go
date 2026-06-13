@@ -10,7 +10,7 @@ import (
 // enumTypes are custom Postgres types that must be registered with pgx so that
 // values (and arrays of them) decode correctly. Array types are auto-derived
 // by LoadType when the element type is loaded first.
-var enumTypes = []string{"profile_role", "_profile_role"}
+var enumTypes = []string{"profile_role", "_profile_role"} //nolint:gochecknoglobals // static registry of pg types to register on each conn
 
 // registerEnumTypes loads custom enum OIDs and registers them on the connection.
 func registerEnumTypes(ctx context.Context, conn *pgx.Conn) error {

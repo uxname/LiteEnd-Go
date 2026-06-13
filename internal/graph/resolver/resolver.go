@@ -15,7 +15,7 @@ import (
 // startTime marks process start for the debug resolver's uptime. It lives here
 // (not in schema.resolvers.go) because gqlgen regeneration only preserves
 // resolver method bodies, not arbitrary package-level declarations.
-var startTime = time.Now()
+var startTime = time.Now() //nolint:gochecknoglobals // process start for uptime; must survive gqlgen regen
 
 // ProfileService is the profile domain behaviour the resolvers depend on.
 type ProfileService interface {

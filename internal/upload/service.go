@@ -25,9 +25,13 @@ var ErrForbidden = errors.New("access denied")
 // ErrNotFound is returned when a requested file does not exist.
 var ErrNotFound = errors.New("file not found")
 
+// ErrDisallowedMime is returned by ProcessFile when the uploaded content-type is
+// not in the image allowlist. Callers skip such files rather than failing.
+var ErrDisallowedMime = errors.New("disallowed mime type")
+
 const defaultMime = "application/octet-stream"
 
-var allowedMimeTypes = map[string]struct{}{
+var allowedMimeTypes = map[string]struct{}{ //nolint:gochecknoglobals // static mime allowlist
 	"image/png":  {},
 	"image/jpeg": {},
 	"image/gif":  {},
@@ -71,10 +75,10 @@ func AllowedMime(mimetype string) bool {
 }
 
 // ProcessFile validates and writes a single uploaded file, returning its
-// metadata, or nil if the mime type is not allowed.
+// metadata. It returns ErrDisallowedMime if the content-type is not allowed.
 func (s *Service) ProcessFile(ctx context.Context, originalFilename, mimetype string, body io.Reader) (*SavedFile, error) {
 	if !AllowedMime(mimetype) {
-		return nil, nil
+		return nil, ErrDisallowedMime
 	}
 
 	relDir := relativeDir(time.Now().UTC())
@@ -135,12 +139,12 @@ func (s *Service) SaveMetadata(ctx context.Context, files []*SavedFile, ip strin
 func (s *Service) SafeFileInfo(relativePath string) (fullPath, mimeType string, err error) {
 	root, err := filepath.Abs(s.uploadDir)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("resolve upload root: %w", err)
 	}
 	full := filepath.Join(root, filepath.Clean("/"+relativePath))
 	resolved, err := filepath.Abs(full)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("resolve upload path: %w", err)
 	}
 	if resolved != root && !strings.HasPrefix(resolved, root+string(os.PathSeparator)) {
 		return "", "", ErrForbidden
@@ -184,8 +188,11 @@ func writeFile(ctx context.Context, path string, body io.Reader) (int64, error) 
 
 	select {
 	case <-ctx.Done():
-		return 0, ctx.Err()
+		return 0, fmt.Errorf("upload cancelled: %w", ctx.Err())
 	case <-done:
-		return written, copyErr
+		if copyErr != nil {
+			return written, fmt.Errorf("write upload: %w", copyErr)
+		}
+		return written, nil
 	}
 }

@@ -118,6 +118,7 @@ func newService() (*Service, *fakeQuerier, *fakeCache) {
 }
 
 func TestFindOrCreateBySub_CreatesThenCaches(t *testing.T) {
+	t.Parallel()
 	svc, q, c := newService()
 	ctx := context.Background()
 
@@ -135,6 +136,7 @@ func TestFindOrCreateBySub_CreatesThenCaches(t *testing.T) {
 }
 
 func TestFindOrCreateBySub_ExistingNoCreate(t *testing.T) {
+	t.Parallel()
 	svc, q, _ := newService()
 	ctx := context.Background()
 	_, _ = q.CreateProfile(ctx, "sub-2")
@@ -146,6 +148,7 @@ func TestFindOrCreateBySub_ExistingNoCreate(t *testing.T) {
 }
 
 func TestUpdate_InvalidatesCache(t *testing.T) {
+	t.Parallel()
 	svc, _, c := newService()
 	ctx := context.Background()
 	created, err := svc.FindOrCreateBySub(ctx, "sub-3")
@@ -166,6 +169,7 @@ func TestUpdate_InvalidatesCache(t *testing.T) {
 }
 
 func TestFindOrCreateMockUser_HasAdminRole(t *testing.T) {
+	t.Parallel()
 	svc, _, _ := newService()
 	p, err := svc.FindOrCreateMockUser(context.Background())
 	require.NoError(t, err)
@@ -176,6 +180,7 @@ func TestFindOrCreateMockUser_HasAdminRole(t *testing.T) {
 }
 
 func TestCount(t *testing.T) {
+	t.Parallel()
 	svc, _, _ := newService()
 	ctx := context.Background()
 	_, _ = svc.FindOrCreateBySub(ctx, "a")

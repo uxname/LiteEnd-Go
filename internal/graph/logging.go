@@ -10,7 +10,7 @@ import (
 )
 
 // sensitiveKeys mirrors the TS gql-logging.interceptor redaction list.
-var sensitiveKeys = map[string]struct{}{
+var sensitiveKeys = map[string]struct{}{ //nolint:gochecknoglobals // static redaction allowlist
 	"password": {}, "token": {}, "secret": {}, "authorization": {},
 	"credentials": {}, "cookie": {}, "sig": {},
 }

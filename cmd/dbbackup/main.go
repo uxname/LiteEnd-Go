@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -15,10 +16,16 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		slog.Error("dbbackup failed", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	cfg, err := config.LoadBackup()
 	if err != nil {
-		slog.Error("config load failed", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("load config: %w", err)
 	}
 	log := logger.New(cfg.LogLevel)
 
@@ -27,7 +34,7 @@ func main() {
 
 	tool := backup.New(cfg, log)
 	if err := tool.Run(ctx); err != nil && ctx.Err() == nil {
-		log.Error("backup tool exited", "error", err)
-		os.Exit(1)
+		return err
 	}
+	return nil
 }

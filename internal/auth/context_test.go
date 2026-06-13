@@ -10,11 +10,13 @@ import (
 )
 
 func TestRequire_NoUser(t *testing.T) {
+	t.Parallel()
 	_, err := Require(context.Background())
 	require.ErrorIs(t, err, ErrUnauthenticated)
 }
 
 func TestRequire_WithUser(t *testing.T) {
+	t.Parallel()
 	user := &sqlc.Profile{ID: 1, OidcSub: "s"}
 	ctx := WithUser(context.Background(), user)
 	got, err := Require(ctx)
@@ -23,6 +25,7 @@ func TestRequire_WithUser(t *testing.T) {
 }
 
 func TestRequireRole(t *testing.T) {
+	t.Parallel()
 	admin := &sqlc.Profile{ID: 1, Roles: []sqlc.ProfileRole{sqlc.ProfileRoleUSER, sqlc.ProfileRoleADMIN}}
 	user := &sqlc.Profile{ID: 2, Roles: []sqlc.ProfileRole{sqlc.ProfileRoleUSER}}
 
@@ -37,6 +40,7 @@ func TestRequireRole(t *testing.T) {
 }
 
 func TestStripBearer(t *testing.T) {
+	t.Parallel()
 	require.Equal(t, "abc", StripBearer("Bearer abc"))
 	require.Equal(t, "abc", StripBearer("bearer abc"))
 	require.Equal(t, "raw", StripBearer("raw"))

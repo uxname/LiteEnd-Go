@@ -9,7 +9,7 @@ import (
 
 // sensitiveKeys are redacted from log attributes. Mirrors the SENSITIVE_KEYS
 // list from the TypeScript gql-logging.interceptor.
-var sensitiveKeys = map[string]struct{}{
+var sensitiveKeys = map[string]struct{}{ //nolint:gochecknoglobals // static redaction allowlist
 	"password":      {},
 	"token":         {},
 	"secret":        {},

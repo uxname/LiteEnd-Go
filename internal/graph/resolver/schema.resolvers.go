@@ -7,7 +7,7 @@ package resolver
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"runtime"
 	"time"
 
@@ -47,7 +47,7 @@ func (r *mutationResolver) AddTestJob(ctx context.Context, message string) (bool
 		return false, err
 	}
 	if r.Queue == nil {
-		return false, fmt.Errorf("queue not available")
+		return false, errors.New("queue not available")
 	}
 	if err := r.Queue.AddTestJob(ctx, message); err != nil {
 		return false, err
@@ -78,7 +78,7 @@ func (r *queryResolver) TestTranslation(ctx context.Context, username string) (s
 		return "", err
 	}
 	if r.I18n == nil {
-		return "", fmt.Errorf("i18n not available")
+		return "", errors.New("i18n not available")
 	}
 	return r.I18n.Translate(ctx, "hello", map[string]string{"username": username}), nil
 }
@@ -132,7 +132,7 @@ func (r *subscriptionResolver) ProfileUpdated(ctx context.Context) (<-chan *mode
 		return nil, err
 	}
 	if r.PubSub == nil {
-		return nil, fmt.Errorf("subscriptions not available")
+		return nil, errors.New("subscriptions not available")
 	}
 
 	src := r.PubSub.SubscribeForUser(ctx, user.ID)

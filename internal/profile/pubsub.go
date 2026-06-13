@@ -3,7 +3,10 @@ package profile
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+
+	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/uxname/liteend-go/internal/db/sqlc"
 	"github.com/uxname/liteend-go/internal/redis"
@@ -29,7 +32,7 @@ func NewPubSub(rdb *redis.Client, log *slog.Logger) *PubSub {
 func (ps *PubSub) Publish(ctx context.Context, p sqlc.Profile) error {
 	raw, err := json.Marshal(p)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal profile event: %w", err)
 	}
 	return ps.rdb.Publish(ctx, profileChannel, string(raw))
 }
@@ -39,35 +42,46 @@ func (ps *PubSub) Publish(ctx context.Context, p sqlc.Profile) error {
 func (ps *PubSub) SubscribeForUser(ctx context.Context, userID int32) <-chan sqlc.Profile {
 	out := make(chan sqlc.Profile, 1)
 	sub := ps.rdb.Subscribe(ctx, profileChannel)
-	ch := sub.Channel()
+	go ps.pump(ctx, sub, out, userID)
+	return out
+}
 
-	go func() {
-		defer close(out)
-		defer func() { _ = sub.Close() }()
-		for {
-			select {
-			case <-ctx.Done():
+// pump reads Redis events and forwards the owner's updates to out until ctx is
+// cancelled or the subscription closes.
+func (ps *PubSub) pump(ctx context.Context, sub *goredis.PubSub, out chan<- sqlc.Profile, userID int32) {
+	defer close(out)
+	defer func() { _ = sub.Close() }()
+	ch := sub.Channel()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg, ok := <-ch:
+			if !ok {
 				return
-			case msg, ok := <-ch:
-				if !ok {
-					return
-				}
-				var p sqlc.Profile
-				if err := json.Unmarshal([]byte(msg.Payload), &p); err != nil {
-					ps.log.Warn("bad profile event payload", "error", err)
-					continue
-				}
-				if p.ID != userID {
-					continue // filter: only the owner's updates
-				}
-				select {
-				case out <- p:
-				case <-ctx.Done():
-					return
-				}
+			}
+			if !ps.forward(ctx, msg.Payload, out, userID) {
+				return
 			}
 		}
-	}()
+	}
+}
 
-	return out
+// forward decodes one event and, if it belongs to userID, sends it to out.
+// It returns false only when ctx is cancelled (signalling pump to stop).
+func (ps *PubSub) forward(ctx context.Context, payload string, out chan<- sqlc.Profile, userID int32) bool {
+	var p sqlc.Profile
+	if err := json.Unmarshal([]byte(payload), &p); err != nil {
+		ps.log.Warn("bad profile event payload", "error", err)
+		return true
+	}
+	if p.ID != userID {
+		return true // filter: only the owner's updates
+	}
+	select {
+	case out <- p:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }

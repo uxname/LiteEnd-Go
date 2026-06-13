@@ -2,16 +2,17 @@
 // Replaces the TypeScript git-commit-saver.
 package version
 
-// These are set with: go build -ldflags "-X .../internal/version.Commit=... -X .../internal/version.BuildTime=..."
+// These are package-level vars (not consts) because they are injected at build
+// time via: go build -ldflags "-X .../internal/version.Commit=... -X .../internal/version.BuildTime=...".
 var (
 	// Commit is the short git SHA the binary was built from.
-	Commit = "unknown"
+	Commit = "unknown" //nolint:gochecknoglobals // injected via -ldflags at build time
 	// BuildTime is the UTC build timestamp (RFC3339).
-	BuildTime = "unknown"
+	BuildTime = "unknown" //nolint:gochecknoglobals // injected via -ldflags at build time
 	// AppName is the application name.
-	AppName = "liteend-go"
+	AppName = "liteend-go" //nolint:gochecknoglobals // build-time identity, overridable via -ldflags
 	// AppVersion is the semantic version.
-	AppVersion = "0.0.1"
+	AppVersion = "0.0.1" //nolint:gochecknoglobals // build-time identity, overridable via -ldflags
 )
 
 // Info bundles build metadata for the debug resolver.

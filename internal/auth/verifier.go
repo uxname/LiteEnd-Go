@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -41,7 +42,7 @@ func (v *Verifier) Verify(ctx context.Context, rawToken string) (string, error) 
 		return "", fmt.Errorf("parse claims: %w", err)
 	}
 	if c.Sub == "" {
-		return "", fmt.Errorf("token has no subject (sub)")
+		return "", errors.New("token has no subject (sub)")
 	}
 	return c.Sub, nil
 }
