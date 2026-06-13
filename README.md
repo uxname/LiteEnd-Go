@@ -92,8 +92,10 @@ Run `task --list` to see them all. The ones you'll use most:
 | `task setup` | First-time setup (env, hooks, codegen, DB, migrations) |
 | `task dev` | Run the app with auto-reload |
 | `task gen` | Regenerate code (after editing SQL or the GraphQL schema) |
+| `task check` | Full project gate — codegen, format, tidy, build, lint, vuln, secrets (runs on `pre-commit`) |
 | `task test` | Run fast unit tests |
-| `task test:integration` | Run full tests against real Postgres + Redis (needs Docker) |
+| `task test:all` | Run every test — unit + integration (needs Docker; runs on `pre-push`) |
+| `task test:integration` | Run only the full tests against real Postgres + Redis (needs Docker) |
 | `task lint` | Check code style and quality |
 | `task fmt` | Auto-format the code |
 | `task vuln` | Check dependencies for known security problems |

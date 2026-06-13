@@ -20,9 +20,11 @@ This is the Go port of the LiteEnd backend. Read this before changing code.
    and preserved across regeneration.
 3. **Run `task gen` after touching SQL or the GraphQL schema**, and commit the
    regenerated output. `task gen` also formats — gqlgen output is not
-   gofumpt-clean on its own. CI fails if generated code is stale (`task gen:check`).
-4. **Format and lint before committing:** `task fmt && task lint`. Code must pass
-   `golangci-lint` with zero issues. The git hooks (lefthook) enforce this.
+   gofumpt-clean on its own. `task check` fails if generated code is stale
+   (`task gen:check`).
+4. **Format and lint before committing:** `task fmt && task lint` (or just
+   `task check`). Code must pass `golangci-lint` with zero issues. The
+   `pre-commit` hook (lefthook) runs `task check` to enforce this.
 5. **Migrations are forward-only and embedded.** Create one with
    `task migration:create name=...` (goose format under `db/migrations/`). They
    run programmatically at startup — don't rely on a goose CLI in production.
@@ -85,9 +87,10 @@ Keep it at **zero issues**.
 - **Complexity gates** are on (`cyclop`, `funlen`, `gocognit`, `nestif`). If a
   function trips them, split it — don't raise the threshold.
 - **Formatting** is `gofumpt` + `gci` import ordering (stdlib → third-party →
-  `github.com/uxname/liteend-go`). `task fmt` applies both. CI checks formatting.
-- **Vulnerabilities:** `task vuln` (`govulncheck`) must report none. It runs in
-  pre-push and CI.
+  `github.com/uxname/liteend-go`). `task fmt` applies both; `task check` verifies
+  it.
+- **Vulnerabilities:** `task vuln` (`govulncheck`) must report none. It runs as
+  part of `task check` (pre-commit).
 
 ## Testing
 
@@ -99,30 +102,32 @@ Keep it at **zero issues**.
   sequentially (shared DB). Run with `task test:integration` (needs Docker).
 - **What new code must cover:** the success path and the key failure modes
   (auth/role denial, validation, path-traversal, dedup, cache invalidation).
-- **Coverage** is measured merged (unit + integration) in CI. There is a soft
-  floor (currently 35%) — a PR that drops below it fails. Raise the floor in
-  `.github/workflows/ci.yml` when coverage climbs.
+- **Coverage:** run `task test:cov` for a merged coverage report when you want to
+  track it. There's no enforced floor (no CI) — keep new code well covered per
+  the rule above.
 - Some packages (`queue`, `redis`, `db`) need a live server and are covered by
   the integration suite rather than unit tests — don't duplicate that with mocks.
 
-## CI gates (what will block a merge)
+## Local gates (what blocks a commit / push)
 
-The GitHub Actions workflow (`.github/workflows/ci.yml`) fails on any of:
+This project has **no CI service** — it's meant to be deployed in any
+environment, so the gates live in the `Taskfile` and run locally via git hooks
+(lefthook). Two commands are the whole gate:
 
-1. **Formatting** not gofumpt-clean.
-2. **Stale generated code** (`task gen` would change something).
-3. **`go.mod`/`go.sum` not tidy.**
-4. **Build** errors.
-5. **Lint** issues (`golangci-lint`).
-6. **Tests** (unit + integration via testcontainers) failing.
-7. **Coverage** below the floor.
-8. **Vulnerabilities** (`govulncheck`).
-9. **Secrets** detected (`gitleaks`).
-10. **Docker image** failing to build.
+- **`task check`** — the full project check, runs on `pre-commit`. It fails on:
+  1. **Stale generated code** (`task gen:check` — sqlc/gqlgen out of sync).
+  2. **`go.mod`/`go.sum` not tidy** (`task tidy:check`).
+  3. **Formatting** not gofumpt-clean (`task fmt:check`).
+  4. **Build** errors (`go build ./...`).
+  5. **Lint** issues (`golangci-lint`, includes `gci` import ordering).
+  6. **Vulnerabilities** (`govulncheck`).
+  7. **Secrets** detected (`gitleaks`, if installed).
+- **`task test:all`** — every test (unit + integration via testcontainers),
+  runs on `pre-push`. Needs Docker.
 
-The same checks (minus Docker) run locally via lefthook: a light lint+format on
-`pre-commit`, and the full lint + vuln + tests on `pre-push`. Install the hooks
-with `task setup` (or `lefthook install`).
+Install the hooks with `task setup` (or `lefthook install`). The hooks call
+`task` / `go-task` (whichever is on PATH), so the exact same checks run by hand
+and in the hook. Run `task check` before committing if you want to fail fast.
 
 ## Admin dashboards & data
 
@@ -148,4 +153,4 @@ with `task setup` (or `lefthook install`).
 - Don't use the global `slog` logger in `internal/` — inject `*slog.Logger`.
 - Don't let domain/infra packages import the transport layer (depguard blocks it).
 - Don't add heavyweight frameworks; this template values a small, idiomatic stack.
-- Don't commit secrets — `gitleaks` runs in pre-commit and CI.
+- Don't commit secrets — `gitleaks` runs in `task check` (pre-commit).

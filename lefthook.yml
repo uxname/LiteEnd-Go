@@ -1,23 +1,16 @@
+# Git hooks. The full project gate lives in the Taskfile so it runs the same
+# way everywhere (locally, in any CI, by hand). On Arch Linux the runner is the
+# `go-task` package — the snippet below uses whichever of `task` / `go-task`
+# is on PATH.
+
 pre-commit:
-  parallel: false
   commands:
-    secrets:
-      run: bash -c 'if command -v gitleaks >/dev/null 2>&1; then gitleaks detect --source . -v --no-banner; fi'
-    fmt:
-      glob: "*.go"
-      # gci import order (golangci) + gofumpt grouping, then re-stage.
-      run: go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint fmt {staged_files} && go tool mvdan.cc/gofumpt -w {staged_files} && git add {staged_files}
-    lint:
-      glob: "*.go"
-      # Lint only the staged files (fast); the full run lives in pre-push.
-      run: go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run {staged_files}
+    check:
+      # Full check: codegen freshness, format, tidy, build, lint, vuln, secrets.
+      run: sh -c 'if command -v task >/dev/null 2>&1; then task check; else go-task check; fi'
 
 pre-push:
-  parallel: false
   commands:
-    lint:
-      run: go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run
-    vuln:
-      run: go tool golang.org/x/vuln/cmd/govulncheck ./...
     test:
-      run: go test -race -count=1 -shuffle=on ./...
+      # All tests — unit + integration (testcontainers, needs Docker).
+      run: sh -c 'if command -v task >/dev/null 2>&1; then task test:all; else go-task test:all; fi'
