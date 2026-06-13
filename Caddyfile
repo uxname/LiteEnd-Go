@@ -1,0 +1,35 @@
+# Auth proxy for the admin dashboards. Every site below requires HTTP Basic
+# Auth, so no dashboard is reachable anonymously.
+#
+# Credentials come from env (ADMIN_USER / ADMIN_PASSWORD_HASH); the defaults
+# below are admin / admin. To change the password, generate a new bcrypt hash:
+#   docker run --rm caddy:2-alpine caddy hash-password --plaintext 'yourpass'
+# and set ADMIN_PASSWORD_HASH in .env (escape every $ as $$ for docker compose).
+{
+	auto_https off
+	admin off
+}
+
+(protected) {
+	basic_auth {
+		{$ADMIN_USER:admin} {$ADMIN_PASSWORD_HASH:$2a$14$HAt9aLO.T.57BDK8puAjf.H59sFkLvkqhxCtU4sZZgyHiJfHjJATW}
+	}
+}
+
+# pgweb (DB browser)
+:8081 {
+	import protected
+	reverse_proxy db_studio:8081
+}
+
+# RedisInsight
+:8082 {
+	import protected
+	reverse_proxy redis_studio:5540
+}
+
+# Asynqmon (queue dashboard)
+:8083 {
+	import protected
+	reverse_proxy asynqmon:8080
+}

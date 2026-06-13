@@ -1,0 +1,32 @@
+schema:
+  - internal/graph/*.graphqls
+
+exec:
+  package: generated
+  filename: internal/graph/generated/generated.go
+
+model:
+  package: model
+  filename: internal/graph/model/models_gen.go
+
+resolver:
+  layout: follow-schema
+  dir: internal/graph/resolver
+  package: resolver
+  filename_template: "{name}.resolvers.go"
+
+omit_slice_element_pointers: true
+
+models:
+  ID:
+    model:
+      - github.com/99designs/gqlgen/graphql.ID
+      - github.com/99designs/gqlgen/graphql.Int32
+  DateTime:
+    model: github.com/99designs/gqlgen/graphql.Time
+  JSON:
+    model: github.com/99designs/gqlgen/graphql.Map
+  URL:
+    model: github.com/99designs/gqlgen/graphql.String
+  ProfileRole:
+    model: github.com/uxname/liteend-go/internal/db/sqlc.ProfileRole

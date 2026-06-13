@@ -1,0 +1,14 @@
+{
+  "hello": "Привет {{.username}}!",
+  "errors.accountSuspended": "Аккаунт заблокирован",
+  "errors.unauthorized": "Неавторизован",
+  "errors.accountHasNoRole": "Ваши роли ({{.accountRoles}}) не разрешены ({{.allowedRoles}})",
+  "errors.invalidPassword": "Неверный пароль",
+  "errors.accountNotFound": "Аккаунт не найден",
+  "errors.emailNotSent": "Ошибка отправки email",
+  "errors.invalidCode": "Неверный код",
+  "errors.profileNotFound": "Профиль не найден",
+  "errors.accountsNotFound": "Аккаунты не найдены",
+  "errors.invalidToken": "Неверный токен",
+  "errors.totpTokenNotSet": "Токен не установлен"
+}

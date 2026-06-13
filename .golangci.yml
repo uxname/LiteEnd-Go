@@ -1,0 +1,35 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - revive
+    - bodyclose
+    - gosec
+    - unconvert
+    - unparam
+  exclusions:
+    rules:
+      # Generated code: relax noise.
+      - path: (internal/graph/generated|internal/db/sqlc)
+        linters:
+          - all
+      # Tests: allow gosec relaxations.
+      - path: _test\.go
+        linters:
+          - gosec
+          - unparam
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports

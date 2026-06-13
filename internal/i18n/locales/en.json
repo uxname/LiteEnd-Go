@@ -1,0 +1,14 @@
+{
+  "hello": "Hello {{.username}}!",
+  "errors.accountSuspended": "Account Suspended",
+  "errors.unauthorized": "Unauthorized",
+  "errors.accountHasNoRole": "Your roles ({{.accountRoles}}) are not allowed ({{.allowedRoles}})",
+  "errors.invalidPassword": "Invalid password",
+  "errors.accountNotFound": "Account not found",
+  "errors.emailNotSent": "Email not sent",
+  "errors.invalidCode": "Invalid code",
+  "errors.profileNotFound": "Profile not found",
+  "errors.accountsNotFound": "Accounts not found",
+  "errors.invalidToken": "Invalid token",
+  "errors.totpTokenNotSet": "TOTP token not set"
+}

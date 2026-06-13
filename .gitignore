@@ -1,0 +1,28 @@
+# Binaries
+/bin/
+/dist/
+*.exe
+
+# Generated docs (swagger)
+/docs/swagger/
+
+# Data & runtime
+data/
+*.log
+
+# Env
+.env
+!.env.example
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Coverage
+coverage.out
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum

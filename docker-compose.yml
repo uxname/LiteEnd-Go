@@ -1,0 +1,196 @@
+x-common-logging: &common-logging
+  driver: "json-file"
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+x-common-restart-policy: &common-restart-policy
+  restart: unless-stopped
+
+services:
+  # Prepares the host-mounted ./data subdirs (uploads, backups) with the right
+  # ownership so the non-root app (uid 65532) and backup (uid 70) containers can
+  # write into them. Postgres/Redis keep their internals in named volumes (those
+  # files are root-owned 0700 and not host-browsable anyway).
+  data_init:
+    image: alpine:3.20
+    command: >
+      sh -c "mkdir -p /data/uploads /data/database_backups &&
+             chown -R 65532:65532 /data/uploads &&
+             chown -R 70:70 /data/database_backups"
+    volumes:
+      - ./data:/data
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    <<: *common-restart-policy
+    env_file:
+      - .env
+    environment:
+      - DATABASE_HOST=db
+      - REDIS_HOST=redis
+    ports:
+      - "127.0.0.1:${PORT}:${PORT}"
+    volumes:
+      - ./data/uploads:/app/data/uploads
+    networks:
+      - liteend-net
+    logging: *common-logging
+    depends_on:
+      data_init:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/server", "-healthcheck"]
+      interval: 5s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  db:
+    image: postgres:18.1-alpine
+    <<: *common-restart-policy
+    environment:
+      POSTGRES_USER: ${DATABASE_USER}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+      POSTGRES_DB: ${DATABASE_NAME}
+    volumes:
+      - postgres:/var/lib/postgresql
+    ports:
+      - "127.0.0.1:${DATABASE_PORT}:${DATABASE_PORT}"
+    command: -p ${DATABASE_PORT}
+    networks:
+      - liteend-net
+    logging: *common-logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER} -d ${DATABASE_NAME} -p ${DATABASE_PORT}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:8.4-alpine
+    <<: *common-restart-policy
+    command: >
+      redis-server --save 20 1 --loglevel warning
+      --requirepass ${REDIS_PASSWORD} --port ${REDIS_PORT}
+    volumes:
+      - redis:/data
+    ports:
+      - "127.0.0.1:${REDIS_PORT}:${REDIS_PORT}"
+    networks:
+      - liteend-net
+    logging: *common-logging
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "${REDIS_PORT}", "-a", "${REDIS_PASSWORD}", "--raw", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  db_backup:
+    build:
+      context: .
+      dockerfile: Dockerfile.dbbackup
+    <<: *common-restart-policy
+    environment:
+      DATABASE_HOST: db
+      DATABASE_PORT: ${DATABASE_PORT}
+      DATABASE_USER: ${DATABASE_USER}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      DATABASE_NAME: ${DATABASE_NAME}
+      BACKUP_DIR: /app/data/database_backups
+      BACKUP_INTERVAL: 4h
+      BACKUP_ROTATION: 20
+      BACKUP_FORMAT: plain
+      BACKUP_COMPRESS: "true"
+    volumes:
+      - ./data/database_backups:/app/data/database_backups
+    networks:
+      - liteend-net
+    logging: *common-logging
+    depends_on:
+      data_init:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+
+  # ---- Admin dashboards (internal only; exposed via the auth proxy below) ----
+
+  # pgweb: DB browser (Prisma Studio analog).
+  db_studio:
+    image: sosedoff/pgweb:latest
+    <<: *common-restart-policy
+    environment:
+      DATABASE_URL: postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@db:${DATABASE_PORT}/${DATABASE_NAME}?sslmode=disable
+    networks:
+      - liteend-net
+    logging: *common-logging
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # RedisInsight: official Redis GUI. RI_REDIS_* pre-configures the "liteend"
+  # connection (visible after accepting the one-time EULA prompt).
+  redis_studio:
+    image: redis/redisinsight:latest
+    <<: *common-restart-policy
+    environment:
+      RI_REDIS_HOST: redis
+      RI_REDIS_PORT: ${REDIS_PORT}
+      RI_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      RI_REDIS_ALIAS: liteend
+    networks:
+      - liteend-net
+    logging: *common-logging
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # Asynqmon: queue dashboard (Bull Board analog).
+  asynqmon:
+    image: hibiken/asynqmon:latest
+    <<: *common-restart-policy
+    command:
+      - "--redis-addr=redis:${REDIS_PORT}"
+      - "--redis-password=${REDIS_PASSWORD}"
+    networks:
+      - liteend-net
+    logging: *common-logging
+    depends_on:
+      - redis
+
+  # Auth proxy: enforces HTTP Basic Auth in front of every admin dashboard, so
+  # none of them is reachable anonymously. Backends publish no host ports.
+  admin_proxy:
+    image: caddy:2-alpine
+    <<: *common-restart-policy
+    environment:
+      ADMIN_USER: ${ADMIN_USER}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - "127.0.0.1:${DB_STUDIO_PORT}:8081"
+      - "127.0.0.1:${REDIS_STUDIO_PORT}:8082"
+      - "127.0.0.1:${ASYNQMON_PORT}:8083"
+    networks:
+      - liteend-net
+    logging: *common-logging
+    depends_on:
+      - db_studio
+      - redis_studio
+      - asynqmon
+
+networks:
+  liteend-net:
+    driver: bridge
+
+volumes:
+  postgres: # Postgres data (internal; inspect via pgweb, not raw files)
+  redis: # Redis data (internal; inspect via RedisInsight)

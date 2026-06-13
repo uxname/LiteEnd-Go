@@ -1,0 +1,81 @@
+version: "3"
+
+vars:
+  BIN: bin
+  PKG: github.com/uxname/liteend-go
+
+tasks:
+  default:
+    cmds:
+      - task --list
+    silent: true
+
+  gen:
+    desc: Run all code generators (sqlc, gqlgen) and format the output
+    cmds:
+      - task: gen:sqlc
+      - task: gen:gqlgen
+      - task: fmt
+
+  gen:sqlc:
+    desc: Generate type-safe DB access from db/queries
+    cmds:
+      - go run github.com/sqlc-dev/sqlc/cmd/sqlc generate
+
+  gen:gqlgen:
+    desc: Generate GraphQL server code from schema
+    cmds:
+      - go run github.com/99designs/gqlgen generate
+
+  build:
+    desc: Build all binaries into ./bin
+    cmds:
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.BIN}}/server ./cmd/server
+      - go build -o {{.BIN}}/dbbackup ./cmd/dbbackup
+      - go build -o {{.BIN}}/dbrestore ./cmd/dbrestore
+    vars:
+      LDFLAGS:
+        sh: 'echo "-X {{.PKG}}/internal/version.Commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown) -X {{.PKG}}/internal/version.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"'
+
+  run:
+    desc: Run the server locally
+    cmds:
+      - go run ./cmd/server
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint run
+
+  fmt:
+    desc: Format code with gofumpt
+    cmds:
+      - go run mvdan.cc/gofumpt -w .
+
+  test:
+    desc: Run unit tests
+    cmds:
+      - go test -race ./...
+
+  test:cov:
+    desc: Run tests with coverage report
+    cmds:
+      - go test -race -coverprofile=coverage.out ./...
+      - go tool cover -func=coverage.out
+
+  test:integration:
+    desc: Run integration/e2e tests (requires Docker for testcontainers)
+    cmds:
+      - go test -race -tags=integration ./...
+
+  migrate:
+    desc: Apply database migrations with goose
+    cmds:
+      - go run github.com/pressly/goose/v3/cmd/goose -dir db/migrations postgres "{{.DATABASE_URL}}" up
+    requires:
+      vars: [DATABASE_URL]
+
+  tidy:
+    desc: Tidy go modules
+    cmds:
+      - go mod tidy

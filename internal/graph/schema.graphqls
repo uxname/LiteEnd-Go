@@ -1,0 +1,55 @@
+scalar JSON
+scalar DateTime
+scalar URL
+
+enum ProfileRole {
+  ADMIN
+  USER
+}
+
+type Profile {
+  id: ID!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  oidcSub: String!
+  roles: [ProfileRole!]!
+  avatarUrl: URL
+  displayName: String
+  bio: String
+}
+
+input ProfileUpdateInput {
+  avatarUrl: URL
+  displayName: String
+  bio: String
+}
+
+type Query {
+  "Get the currently authenticated profile"
+  me: Profile!
+
+  "Test i18n translation by username (ADMIN only)"
+  testTranslation(username: String!): String!
+
+  "Echo back the input text (ADMIN only, dev utility)"
+  echo(text: String!): String!
+
+  "Debug info: uptime, memory, app version, users count (ADMIN only)"
+  debug: JSON!
+}
+
+type Mutation {
+  "Update the current user profile fields"
+  updateProfile(input: ProfileUpdateInput!): Profile!
+
+  "Adds a job to the test queue"
+  addTestJob(message: String!): Boolean!
+
+  "Echo mutation — returns the input text (ADMIN only, dev utility)"
+  echo(text: String!): String!
+}
+
+type Subscription {
+  "Receive real-time updates when the current user profile changes"
+  profileUpdated: Profile!
+}

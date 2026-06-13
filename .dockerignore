@@ -1,0 +1,15 @@
+.git
+.github
+.idea
+.vscode
+bin
+dist
+data
+coverage.out
+coverage.html
+*.log
+.env
+README.md
+AGENTS.md
+.golangci.yml
+Taskfile.yml
