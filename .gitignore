@@ -26,3 +26,7 @@ coverage.html
 # Go workspace
 go.work
 go.work.sum
+
+# CodeGraph index (machine-local, rebuilt via 'task setup' / 'task codegraph')
+/.codegraph/
+/.cursor/rules/codegraph.mdc

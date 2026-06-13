@@ -4,6 +4,9 @@ A small, fast, ready-for-production backend starter written in Go. It speaks the
 same GraphQL API as the original TypeScript **LiteEnd**, so an existing frontend
 keeps working without changes.
 
+New to the project? Jump to [New here? Read this first](#new-here-read-this-first)
+for the 5-minute orientation before anything else.
+
 ## TL;DR
 
 - **What you get:** a GraphQL + REST backend with login (OIDC/JWT), user
@@ -27,6 +30,43 @@ keeps working without changes.
 - **On Arch Linux:** the `task` runner is the `go-task` package. Run `go-task`
   wherever this file says `task`.
 
+## New here? Read this first
+
+**What problem does this solve?** It's a starter kit, not a finished app. It
+already wires up the boring-but-essential parts of a backend (database, login,
+logging, jobs, file uploads, backups) so you can spend your time on *your*
+features instead of plumbing.
+
+**What should I already know?** Basic Go, what an HTTP API is, and how to use a
+terminal. You do **not** need to know GraphQL, OIDC, or code generation up front
+— the mini-glossary below covers what matters, and you'll pick up the rest by
+following the [walkthrough](#your-first-change-a-walkthrough).
+
+**Mini-glossary** (the words you'll keep seeing):
+
+| Term | In one sentence |
+|---|---|
+| **GraphQL** | An API style where the client asks for exactly the fields it wants in one request. Our API "shape" is defined in `internal/graph/schema.graphqls`. |
+| **Resolver** | The Go function that produces the data for a GraphQL field. You write these by hand in `internal/graph/resolver/`. |
+| **Code generation (codegen)** | Tools read a definition file and write Go code for you. We generate GraphQL plumbing from the schema (gqlgen) and type-safe DB code from SQL (sqlc). **Never edit generated files by hand** — change the source and re-run `task gen`. |
+| **Migration** | A versioned SQL file that changes the database structure (e.g. add a table). They run automatically on startup. |
+| **OIDC / JWT** | The login standard. In dev it's faked, so you don't need a real login server to start. |
+| **Resolver vs generated** | You edit: the schema, SQL queries, and resolver bodies. The machine owns: everything under `generated/`, `model/models_gen.go`, and `db/sqlc/`. |
+
+**How a request flows** (the big picture):
+
+```
+HTTP request
+   → chi router + middleware   (internal/server, internal/middleware)
+   → auth: who is this user?    (internal/auth — reads the token / mock)
+   → GraphQL handler            (internal/graph)
+   → a resolver                 (internal/graph/resolver — your code)
+   → a service                  (e.g. internal/profile — business logic)
+   → the database / cache       (internal/db via sqlc, internal/redis)
+```
+
+Read [AGENTS.md](AGENTS.md) once you want the deeper "why" behind the rules.
+
 ## What's inside
 
 | Area | What it does |
@@ -47,6 +87,8 @@ You need:
 - **Docker** (for `docker compose` and for the integration tests)
 - **Task** (optional but handy) — the command shortcuts below. On Arch it's the
   `go-task` package.
+- **CodeGraph** (optional) — a code-navigation index for AI assistants; see
+  [Finding your way around the code](#finding-your-way-around-the-code).
 
 ## Get it running
 
@@ -64,12 +106,17 @@ them.
 ### Option B — app on your machine, database in Docker (best for coding)
 
 ```bash
-task setup     # copies .env, installs git hooks, generates code, starts DB+Redis, runs migrations
+task setup     # copies .env, installs git hooks, generates code, builds the CodeGraph index, starts DB+Redis, runs migrations
 task dev       # runs the app and restarts it automatically when you change a .go file
 ```
 
 `task dev` uses [wgo](https://github.com/bokwoon95/wgo) for auto-reload — save a
 file and the server restarts on its own.
+
+> **First time? Sanity check.** After `task dev` is running, open
+> <http://localhost:4000/health> — you should see `{"status":"ok"}`. Then open
+> <http://localhost:4000/playground> (login `admin` / `admin`) and run
+> `query { me { id roles } }`. If both work, your setup is good.
 
 > **Logging in to the dashboards.** Every dashboard is protected — there is no
 > anonymous access. The dashboards (pgweb, RedisInsight, Asynqmon) sit behind a
@@ -83,13 +130,58 @@ file and the server restarts on its own.
 > their own data in Docker volumes (don't put those in `./data` — they're
 > root-owned and would break `go test ./...`).
 
+## Your first change (a walkthrough)
+
+Let's add a `version` field to the API so a client can ask the server which build
+it's running. This shows the **schema → generate → resolve** loop you'll use for
+almost every change.
+
+1. **Describe it in the schema.** Open `internal/graph/schema.graphqls` and add a
+   field to `Query` (always give it a description string — the schema is meant to
+   be self-documenting):
+
+   ```graphql
+   type Query {
+     # ...existing fields...
+
+     "The running server build version"
+     version: String!
+   }
+   ```
+
+2. **Generate the plumbing.** Run:
+
+   ```bash
+   task gen
+   ```
+
+   gqlgen writes a new resolver stub for `version` and updates the generated
+   files. (`task gen` also formats the output and never touches your hand-written
+   resolver bodies.)
+
+3. **Fill in the resolver.** Open the new stub in
+   `internal/graph/resolver/` and return a value — the existing `Debug` resolver
+   shows how to read app info. Build it to be sure it compiles:
+
+   ```bash
+   go build ./...
+   ```
+
+4. **Try it.** `task dev`, then in the playground run `query { version }`.
+
+5. **Check before committing.** `task check` runs the same gate the
+   `pre-commit` hook does (codegen freshness, format, lint, vuln, secrets).
+
+The same loop applies to the database: edit a query in `db/queries/*.sql`, run
+`task gen`, then call the generated `database.Queries.<Name>` from a service.
+
 ## Everyday commands
 
 Run `task --list` to see them all. The ones you'll use most:
 
 | Command | What it does |
 |---|---|
-| `task setup` | First-time setup (env, hooks, codegen, DB, migrations) |
+| `task setup` | First-time setup (env, hooks, codegen, CodeGraph index, DB, migrations) |
 | `task dev` | Run the app with auto-reload |
 | `task gen` | Regenerate code (after editing SQL or the GraphQL schema) |
 | `task check` | Full project gate — codegen, format, tidy, build, lint, vuln, secrets (runs on `pre-commit`) |
@@ -102,6 +194,7 @@ Run `task --list` to see them all. The ones you'll use most:
 | `task migrate` | Apply database migrations |
 | `task migration:create name=add_x` | Create a new migration file |
 | `task db:reset` | Wipe and recreate the dev database |
+| `task codegraph` | Build/refresh the CodeGraph index (no-op if the CLI isn't installed) |
 
 ## How you log in (dev vs real)
 
@@ -134,7 +227,9 @@ All settings come from environment variables (see `.env.example`). The important
 - **REST docs:** Swagger UI at `/swagger` (the spec file is at `/openapi.yaml`).
 - **Jobs dashboard:** Asynqmon (its own container, port `:5300`).
 
-## Where things live
+## Finding your way around the code
+
+### The layout
 
 ```
 cmd/         entry points: server, dbbackup, dbrestore
@@ -161,10 +256,25 @@ Caddyfile     password proxy for the dashboards
 docker-compose.yml
 ```
 
+Good rule of thumb: start at `internal/app/app.go` (it wires everything) and
+follow the call into the package you care about.
+
+### CodeGraph (for AI assistants)
+
+This project supports **CodeGraph** — a
+searchable map of every symbol and call in the codebase. AI assistants use it to
+answer "who calls this?" / "where is X defined?" far more accurately than text
+search. `task setup` builds the index automatically (and skips silently if the
+CLI isn't installed); rebuild it any time with `task codegraph`. The index lives
+in `.codegraph/` and is git-ignored — it's local to your machine.
+
 ## Adding your own code
 
-- **A GraphQL field:** edit `internal/graph/schema.graphqls`, run `task gen`, then
-  write the new resolver in `internal/graph/resolver/`.
+A quick reference (the [walkthrough](#your-first-change-a-walkthrough) shows the
+full loop):
+
+- **A GraphQL field:** edit `internal/graph/schema.graphqls` (with a description),
+  run `task gen`, then write the new resolver in `internal/graph/resolver/`.
 - **A database query:** add it to `db/queries/*.sql`, run `task gen`, then call
   `database.Queries.<Name>`.
 - **A migration:** `task migration:create name=add_something`, edit the new file
@@ -180,8 +290,10 @@ task test               # fast unit tests (fakes, no Docker)
 task test:integration   # full tests against real Postgres + Redis (Docker)
 ```
 
-The integration tests cover the GraphQL contract (queries, mutations, the
-`profileUpdated` subscription), uploads, jobs, translations, and health.
+Unit tests use in-memory fakes, so they're fast and need no Docker — write these
+for your business logic. Integration tests cover the GraphQL contract (queries,
+mutations, the `profileUpdated` subscription), uploads, jobs, translations, and
+health against real Postgres + Redis.
 
 ## Deploying
 

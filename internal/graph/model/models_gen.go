@@ -11,21 +11,34 @@ import (
 type Mutation struct {
 }
 
+// A user profile, created on first login from the OIDC subject.
 type Profile struct {
-	ID          string             `json:"id"`
-	CreatedAt   time.Time          `json:"createdAt"`
-	UpdatedAt   time.Time          `json:"updatedAt"`
-	OidcSub     string             `json:"oidcSub"`
-	Roles       []sqlc.ProfileRole `json:"roles"`
-	AvatarURL   *string            `json:"avatarUrl,omitempty"`
-	DisplayName *string            `json:"displayName,omitempty"`
-	Bio         *string            `json:"bio,omitempty"`
+	// Unique profile identifier.
+	ID string `json:"id"`
+	// When the profile was first created.
+	CreatedAt time.Time `json:"createdAt"`
+	// When the profile was last modified.
+	UpdatedAt time.Time `json:"updatedAt"`
+	// OIDC subject (`sub` claim) this profile is bound to — stable per identity provider.
+	OidcSub string `json:"oidcSub"`
+	// Roles granted to this profile; controls access to guarded operations.
+	Roles []sqlc.ProfileRole `json:"roles"`
+	// URL of the profile avatar image, if set.
+	AvatarURL *string `json:"avatarUrl,omitempty"`
+	// Human-readable display name, if set.
+	DisplayName *string `json:"displayName,omitempty"`
+	// Free-form user biography, if set.
+	Bio *string `json:"bio,omitempty"`
 }
 
+// Fields a user may change on their own profile. Omitted fields are left unchanged.
 type ProfileUpdateInput struct {
-	AvatarURL   *string `json:"avatarUrl,omitempty"`
+	// New avatar image URL.
+	AvatarURL *string `json:"avatarUrl,omitempty"`
+	// New display name.
 	DisplayName *string `json:"displayName,omitempty"`
-	Bio         *string `json:"bio,omitempty"`
+	// New biography text.
+	Bio *string `json:"bio,omitempty"`
 }
 
 type Query struct {

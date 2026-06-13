@@ -332,29 +332,50 @@ func newExecutionContext(
 }
 
 var sources = []*ast.Source{
-	{Name: "../schema.graphqls", Input: `scalar JSON
+	{Name: "../schema.graphqls", Input: `"Arbitrary JSON value, serialized as a JSON object/scalar."
+scalar JSON
+
+"RFC 3339 / ISO 8601 timestamp (e.g. 2024-01-02T15:04:05Z)."
 scalar DateTime
+
+"Absolute URL string."
 scalar URL
 
+"Access role granted to a profile; drives authorization on guarded fields."
 enum ProfileRole {
+  "Full access — may call admin-only queries and mutations."
   ADMIN
+  "Standard authenticated user."
   USER
 }
 
+"A user profile, created on first login from the OIDC subject."
 type Profile {
+  "Unique profile identifier."
   id: ID!
+  "When the profile was first created."
   createdAt: DateTime!
+  "When the profile was last modified."
   updatedAt: DateTime!
+  "OIDC subject (` + "`" + `sub` + "`" + ` claim) this profile is bound to — stable per identity provider."
   oidcSub: String!
+  "Roles granted to this profile; controls access to guarded operations."
   roles: [ProfileRole!]!
+  "URL of the profile avatar image, if set."
   avatarUrl: URL
+  "Human-readable display name, if set."
   displayName: String
+  "Free-form user biography, if set."
   bio: String
 }
 
+"Fields a user may change on their own profile. Omitted fields are left unchanged."
 input ProfileUpdateInput {
+  "New avatar image URL."
   avatarUrl: URL
+  "New display name."
   displayName: String
+  "New biography text."
   bio: String
 }
 

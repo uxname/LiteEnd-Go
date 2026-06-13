@@ -60,8 +60,10 @@ This is the Go port of the LiteEnd backend. Read this before changing code.
 
 ## How to add things
 
-- **A GraphQL field:** edit `schema.graphqls` → `task gen` → implement the new
-  resolver stub in `internal/graph/resolver/`.
+- **A GraphQL field:** edit `schema.graphqls` (give every new type, field, enum
+  value, and input a `"description"` string — the schema is self-documenting and
+  the descriptions surface in the playground and to AI agents) → `task gen` →
+  implement the new resolver stub in `internal/graph/resolver/`.
 - **A DB query:** add it to `db/queries/*.sql` with a `-- name:` annotation →
   `task gen` → use `database.Queries.<Name>`.
 - **A new enum/array column:** add a migration; if it's an enum, register its type
@@ -74,6 +76,18 @@ This is the Go port of the LiteEnd backend. Read this before changing code.
   in that test's `devRoutes` allowlist.
 - **A translation:** add the key to both `internal/i18n/locales/en.json` and
   `ru.json` (go-i18n format, `{{.placeholder}}`).
+
+## Code navigation (CodeGraph)
+
+This project supports **CodeGraph** — a tree-sitter knowledge graph of every
+symbol and edge, queryable by AI agents via the `codegraph_*` MCP tools (who
+calls what, where a symbol is defined, impact analysis). Prefer it over grep for
+structural questions.
+
+- The index is built automatically by `task setup` (or rebuild it any time with
+  `task codegraph`). Both are no-ops if the `codegraph` CLI isn't installed.
+- The index (`/.codegraph/`) is **machine-local and git-ignored** — it's rebuilt
+  per clone, never committed.
 
 ## Quality & linters
 
