@@ -2,6 +2,10 @@
 
 This is the Go port of the LiteEnd backend. Read this before changing code.
 
+> Commands use `task <name>`. On Arch Linux the runner is the `go-task` package
+> (`go-task <name>`). All dev tools are pinned in the `tool` block of `go.mod`
+> and invoked with `go tool <path>` — no separate `go install` needed.
+
 ## Golden rules
 
 1. **Preserve the GraphQL API contract.** `internal/graph/schema.graphqls` is the
@@ -15,37 +19,49 @@ This is the Go port of the LiteEnd backend. Read this before changing code.
    Resolver bodies in `internal/graph/resolver/*.resolvers.go` ARE hand-written
    and preserved across regeneration.
 3. **Run `task gen` after touching SQL or the GraphQL schema**, and commit the
-   regenerated output. CI fails if generated code is stale.
-4. **Lint and format before committing:** `task fmt && task lint`. Code must pass
-   `golangci-lint` (gofumpt formatting is enforced).
-5. **Migrations are forward-only and embedded.** Add a new file under
-   `db/migrations/` (goose format, `NNNNN_name.sql`). They run programmatically at
-   startup — don't rely on a goose CLI in production.
+   regenerated output. `task gen` also formats — gqlgen output is not
+   gofumpt-clean on its own. CI fails if generated code is stale (`task gen:check`).
+4. **Format and lint before committing:** `task fmt && task lint`. Code must pass
+   `golangci-lint` with zero issues. The git hooks (lefthook) enforce this.
+5. **Migrations are forward-only and embedded.** Create one with
+   `task migration:create name=...` (goose format under `db/migrations/`). They
+   run programmatically at startup — don't rely on a goose CLI in production.
 
 ## Architecture conventions
 
 - **Composition root:** `internal/app/Build` wires everything. Both `cmd/server`
   and the integration tests use it, so they exercise identical wiring. Add new
-  dependencies there.
+  dependencies there. Route topology lives in `app.mountRoutes` (a single source
+  of truth that the OpenAPI route-sync test checks).
 - **No DI framework.** Dependencies are explicit constructor args. Define narrow
   interfaces at the consumer (e.g. `profile.Querier`, `profile.Cache`,
-  `resolver.ProfileService`) to keep packages testable.
+  `auth.Profiles`, `resolver.ProfileService`) to keep packages testable.
+- **Layering (enforced by depguard).** Dependencies point inward: domain/infra
+  packages (`profile`, `upload`, `queue`, `auth`, `redis`, `db`, `i18n`,
+  `health`, `backup`, `middleware`, `logger`, `config`) must NOT import the
+  transport layer (`internal/graph`, `internal/server`, `internal/app`). `task
+  lint` fails if they do.
 - **Auth:** the authenticated user lives in `context.Context`
   (`auth.WithUser` / `auth.UserFromContext`). Enforce access in resolvers with
   `auth.Require(ctx)` / `auth.RequireRole(ctx, role)`. Roles come from the DB
   profile, not the token.
-- **Errors:** return wrapped errors (`fmt.Errorf("...: %w", err)`). GraphQL errors
-  are shaped by `internal/graph/errors.go` (adds `code`, `statusCode`, `requestId`).
-- **Logging:** use the injected `*slog.Logger`. Sensitive keys
-  (`password`, `token`, `authorization`, …) are auto-redacted — don't log raw
-  secrets anyway.
+- **Errors:** wrap errors from other packages with context
+  (`fmt.Errorf("...: %w", err)`) — `wrapcheck` requires wrapping third-party
+  errors. Use sentinel errors for expected outcomes (e.g.
+  `profile.ErrProfileNotFound`, `upload.ErrDisallowedMime`) instead of returning
+  `nil, nil`. GraphQL errors are shaped by `internal/graph/errors.go` (adds
+  `code`, `statusCode`, `requestId`).
+- **Logging:** use the injected `*slog.Logger`, never the global one
+  (`sloglint` forbids `slog.Info`/`slog.Default` outside `cmd/`). Sensitive keys
+  (`password`, `token`, `authorization`, …) are auto-redacted — still don't log
+  raw secrets.
 
 ## How to add things
 
-- **A GraphQL field:** edit `schema.graphqls` → `task gen:gqlgen` → implement the
-  new resolver stub in `internal/graph/resolver/`.
+- **A GraphQL field:** edit `schema.graphqls` → `task gen` → implement the new
+  resolver stub in `internal/graph/resolver/`.
 - **A DB query:** add it to `db/queries/*.sql` with a `-- name:` annotation →
-  `task gen:sqlc` → use `database.Queries.<Name>`.
+  `task gen` → use `database.Queries.<Name>`.
 - **A new enum/array column:** add a migration; if it's an enum, register its type
   in `internal/db/enums.go` so pgx can decode arrays.
 - **A background job:** define a task type + handler in `internal/queue`, register
@@ -57,15 +73,56 @@ This is the Go port of the LiteEnd backend. Read this before changing code.
 - **A translation:** add the key to both `internal/i18n/locales/en.json` and
   `ru.json` (go-i18n format, `{{.placeholder}}`).
 
+## Quality & linters
+
+`task lint` runs `golangci-lint` in a strict configuration (`.golangci.yml`).
+Keep it at **zero issues**.
+
+- **`//nolint` needs a reason.** `nolintlint` requires the form
+  `//nolint:<linter> // why`. A bare `//nolint` fails. Only suppress when the
+  finding is a genuine false positive or an intentional, documented exception
+  (e.g. the `version.*` vars are globals on purpose — injected via `-ldflags`).
+- **Complexity gates** are on (`cyclop`, `funlen`, `gocognit`, `nestif`). If a
+  function trips them, split it — don't raise the threshold.
+- **Formatting** is `gofumpt` + `gci` import ordering (stdlib → third-party →
+  `github.com/uxname/liteend-go`). `task fmt` applies both. CI checks formatting.
+- **Vulnerabilities:** `task vuln` (`govulncheck`) must report none. It runs in
+  pre-push and CI.
+
 ## Testing
 
 - **Unit tests** (no build tag) use in-memory fakes — fast, no Docker. Run with
-  `task test`.
+  `task test` (race detector on). Put `t.Parallel()` at the top of each unit test
+  (the linter enforces it); the exception is tests that call `t.Setenv`.
 - **Integration/e2e tests** live in `test/` behind the `//go:build integration`
-  tag and use **testcontainers-go** (real Postgres + Redis). Run with
-  `task test:integration` (needs Docker).
-- New features need tests covering the success path and the key failure modes
+  tag and use **testcontainers-go** (real Postgres + Redis). They run
+  sequentially (shared DB). Run with `task test:integration` (needs Docker).
+- **What new code must cover:** the success path and the key failure modes
   (auth/role denial, validation, path-traversal, dedup, cache invalidation).
+- **Coverage** is measured merged (unit + integration) in CI. There is a soft
+  floor (currently 35%) — a PR that drops below it fails. Raise the floor in
+  `.github/workflows/ci.yml` when coverage climbs.
+- Some packages (`queue`, `redis`, `db`) need a live server and are covered by
+  the integration suite rather than unit tests — don't duplicate that with mocks.
+
+## CI gates (what will block a merge)
+
+The GitHub Actions workflow (`.github/workflows/ci.yml`) fails on any of:
+
+1. **Formatting** not gofumpt-clean.
+2. **Stale generated code** (`task gen` would change something).
+3. **`go.mod`/`go.sum` not tidy.**
+4. **Build** errors.
+5. **Lint** issues (`golangci-lint`).
+6. **Tests** (unit + integration via testcontainers) failing.
+7. **Coverage** below the floor.
+8. **Vulnerabilities** (`govulncheck`).
+9. **Secrets** detected (`gitleaks`).
+10. **Docker image** failing to build.
+
+The same checks (minus Docker) run locally via lefthook: a light lint+format on
+`pre-commit`, and the full lint + vuln + tests on `pre-push`. Install the hooks
+with `task setup` (or `lefthook install`).
 
 ## Admin dashboards & data
 
@@ -88,5 +145,7 @@ This is the Go port of the LiteEnd backend. Read this before changing code.
 - Don't enable `OIDC_MOCK_ENABLED` in production (config rejects it).
 - Don't bypass `upload.SafeFileInfo` when serving files (path-traversal guard).
 - Don't expose an admin dashboard without the auth proxy / Basic-Auth.
+- Don't use the global `slog` logger in `internal/` — inject `*slog.Logger`.
+- Don't let domain/infra packages import the transport layer (depguard blocks it).
 - Don't add heavyweight frameworks; this template values a small, idiomatic stack.
 - Don't commit secrets — `gitleaks` runs in pre-commit and CI.
