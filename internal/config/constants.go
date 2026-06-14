@@ -9,18 +9,28 @@ const (
 	// RateLimitWindow is the sliding window for rate limiting.
 	RateLimitWindow = time.Minute
 
-	// CompressionThreshold is the minimum response size (bytes) before gzip kicks in.
-	CompressionThreshold = 1024
 	// BodyLimit is the maximum accepted request body size (10 MiB).
 	BodyLimit = 10 * 1024 * 1024
 
 	// HeapThresholdMB is the heap usage health threshold in megabytes.
 	HeapThresholdMB = 150
-	// DiskThreshold is the disk usage health threshold (fraction).
-	DiskThreshold = 0.9
 
 	// FallbackRequestID is used when no request id is present.
 	FallbackRequestID = "unknown"
+
+	// HTTP server timeouts. ReadHeaderTimeout caps slow header sends; ReadTimeout
+	// and WriteTimeout bound the full request/response (Slow Loris protection);
+	// IdleTimeout reaps idle keep-alive connections. ShutdownTimeout bounds the
+	// graceful-shutdown drain.
+	ServerReadHeaderTimeout = 10 * time.Second
+	ServerReadTimeout       = 10 * time.Second
+	ServerWriteTimeout      = 30 * time.Second
+	ServerIdleTimeout       = 60 * time.Second
+	ServerShutdownTimeout   = 15 * time.Second
+
+	// OIDCHTTPTimeout bounds JWKS/issuer fetches so a hung issuer cannot stall
+	// every authenticated request indefinitely.
+	OIDCHTTPTimeout = 5 * time.Second
 
 	// Redis tuning.
 	RedisConnectTimeout = 10 * time.Second

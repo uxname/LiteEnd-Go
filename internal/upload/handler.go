@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/uxname/liteend-go/internal/config"
+	"github.com/uxname/liteend-go/internal/httperr"
 )
 
 // Handler exposes the upload/download HTTP endpoints.
@@ -63,12 +64,14 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, ErrDisallowedMime) {
 			continue // skip non-image parts
 		}
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "Failed to process file")
+		if errors.Is(err, ErrFileTooLarge) {
+			h.svc.RemoveFiles(saved)
+			writeErr(w, http.StatusBadRequest, "File too large")
 			return
 		}
-		if f.size > config.UploadMaxFileSize {
-			writeErr(w, http.StatusBadRequest, "File too large")
+		if err != nil {
+			h.svc.RemoveFiles(saved)
+			writeErr(w, http.StatusBadRequest, "Failed to process file")
 			return
 		}
 		saved = append(saved, f)
@@ -80,6 +83,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.SaveMetadata(r.Context(), saved, ip); err != nil {
+		h.svc.RemoveFiles(saved) // roll back orphaned files when metadata fails
 		writeErr(w, http.StatusInternalServerError, "Failed to save metadata")
 		return
 	}
@@ -92,13 +96,6 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_, _ = w.Write(body)
-}
-
-// errorResponse is the JSON body for error replies. It uses only int+string
-// fields so json encoding cannot fail (keeps errchkjson satisfied).
-type errorResponse struct {
-	StatusCode int    `json:"statusCode"`
-	Message    string `json:"message"`
 }
 
 func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
@@ -120,15 +117,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeErr(w http.ResponseWriter, code int, msg string) {
-	body, err := json.Marshal(errorResponse{StatusCode: code, Message: msg})
-	if err != nil {
-		// Unreachable for a scalar-only struct, but keeps the encoding honest.
-		http.Error(w, msg, code)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_, _ = w.Write(body)
+	httperr.Write(w, code, msg)
 }
 
 func clientIP(r *http.Request) string {

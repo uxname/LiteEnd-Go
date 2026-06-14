@@ -3,6 +3,8 @@ package middleware
 import (
 	"crypto/subtle"
 	"net/http"
+
+	"github.com/uxname/liteend-go/internal/httperr"
 )
 
 // BasicAuth guards a route with HTTP Basic Auth using constant-time comparison.
@@ -17,7 +19,7 @@ func BasicAuth(realm, user, pass string) func(http.Handler) http.Handler {
 				subtle.ConstantTimeCompare([]byte(u), userB) != 1 ||
 				subtle.ConstantTimeCompare([]byte(p), passB) != 1 {
 				w.Header().Set("WWW-Authenticate", `Basic realm="`+realm+`"`)
-				http.Error(w, `{"statusCode":401,"message":"Unauthorized"}`, http.StatusUnauthorized)
+				httperr.Write(w, http.StatusUnauthorized, "Unauthorized")
 				return
 			}
 			next.ServeHTTP(w, r)

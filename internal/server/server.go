@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
@@ -15,6 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/uxname/liteend-go/internal/config"
+	"github.com/uxname/liteend-go/internal/httperr"
 	appmw "github.com/uxname/liteend-go/internal/middleware"
 )
 
@@ -51,7 +51,7 @@ func New(cfg *config.Config, log *slog.Logger, rdb *redis.Client) *Server {
 
 	// Catch-all 404 (mirrors AppController).
 	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, `{"statusCode":404,"message":"Not Found"}`, http.StatusNotFound)
+		httperr.Write(w, http.StatusNotFound, "Not Found")
 	})
 
 	return &Server{cfg: cfg, log: log, router: r}
@@ -66,7 +66,10 @@ func (s *Server) Run(ctx context.Context) error {
 	srv := &http.Server{
 		Addr:              fmt.Sprintf("0.0.0.0:%d", s.cfg.Port),
 		Handler:           s.router,
-		ReadHeaderTimeout: 10 * time.Second,
+		ReadHeaderTimeout: config.ServerReadHeaderTimeout,
+		ReadTimeout:       config.ServerReadTimeout,
+		WriteTimeout:      config.ServerWriteTimeout,
+		IdleTimeout:       config.ServerIdleTimeout,
 	}
 
 	errCh := make(chan error, 1)
@@ -84,7 +87,7 @@ func (s *Server) Run(ctx context.Context) error {
 		s.log.Info("shutting down server")
 		// ctx is already cancelled (that's why we're here); detach its
 		// cancellation but keep its values, then give shutdown a fresh deadline.
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), config.ServerShutdownTimeout)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("server shutdown: %w", err)

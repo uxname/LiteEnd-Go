@@ -93,11 +93,11 @@ type BackupConfig struct {
 	DatabasePassword string `env:"DATABASE_PASSWORD,required"`
 	DatabaseName     string `env:"DATABASE_NAME" envDefault:"postgres"`
 
-	BackupDir      string        `env:"BACKUP_DIR" envDefault:"./data/database_backups"`
-	BackupInterval time.Duration `env:"BACKUP_INTERVAL" envDefault:"24h"`
-	BackupRotation int           `env:"BACKUP_ROTATION" envDefault:"5"`
-	BackupFormat   string        `env:"BACKUP_FORMAT" envDefault:"plain"`
-	BackupCompress bool          `env:"BACKUP_COMPRESS" envDefault:"true"`
+	BackupDir                string        `env:"BACKUP_DIR" envDefault:"./data/database_backups"`
+	BackupInterval           time.Duration `env:"BACKUP_INTERVAL" envDefault:"24h"`
+	BackupRotation           int           `env:"BACKUP_ROTATION" envDefault:"5"`
+	BackupFormat             string        `env:"BACKUP_FORMAT" envDefault:"plain"`
+	BackupCompressionEnabled bool          `env:"BACKUP_COMPRESS" envDefault:"true"`
 }
 
 // LoadBackup loads configuration for the backup tools (no OIDC required).

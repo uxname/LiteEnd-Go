@@ -12,10 +12,14 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/db/sqlc"
 )
+
+// uniqueViolation is the PostgreSQL SQLSTATE for a unique-constraint violation.
+const uniqueViolation = "23505"
 
 // ErrProfileNotFound is returned by FindBySub when no profile exists for the
 // given OIDC subject (distinct from a real lookup error).
@@ -65,11 +69,10 @@ func (s *Service) FindOrCreateBySub(ctx context.Context, sub string) (sqlc.Profi
 
 	p, err := s.q.GetProfileByOIDCSub(ctx, sub)
 	if errors.Is(err, pgx.ErrNoRows) {
-		p, err = s.q.CreateProfile(ctx, sub)
+		p, err = s.createOrGet(ctx, sub)
 		if err != nil {
-			return sqlc.Profile{}, fmt.Errorf("create profile: %w", err)
+			return sqlc.Profile{}, err
 		}
-		s.log.Info("profile created", "oidcSub", sub, "profileId", p.ID)
 	} else if err != nil {
 		return sqlc.Profile{}, fmt.Errorf("get profile: %w", err)
 	}
@@ -78,8 +81,31 @@ func (s *Service) FindOrCreateBySub(ctx context.Context, sub string) (sqlc.Profi
 	return p, nil
 }
 
-// FindBySub returns a profile by subject, or ErrProfileNotFound if none exists
-// (cached).
+// createOrGet creates a profile for sub, tolerating the find-or-create race: if
+// a concurrent request inserts the same oidc_sub between our SELECT and INSERT,
+// CreateProfile fails with a unique-constraint violation, so we re-read the row
+// the winner created instead of surfacing a 500.
+func (s *Service) createOrGet(ctx context.Context, sub string) (sqlc.Profile, error) {
+	p, err := s.q.CreateProfile(ctx, sub)
+	if err == nil {
+		s.log.Info("profile created", "profileId", p.ID)
+		return p, nil
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
+		p, err = s.q.GetProfileByOIDCSub(ctx, sub)
+		if err != nil {
+			return sqlc.Profile{}, fmt.Errorf("get profile after create conflict: %w", err)
+		}
+		return p, nil
+	}
+	return sqlc.Profile{}, fmt.Errorf("create profile: %w", err)
+}
+
+// FindBySub returns a profile by subject, or ErrProfileNotFound if none exists.
+// Note: this is a read-through cache — on a cache miss it populates the Redis
+// cache as a side effect (an intentional caching optimisation, not a mutation
+// of the profile itself).
 func (s *Service) FindBySub(ctx context.Context, sub string) (*sqlc.Profile, error) {
 	if p, ok := s.fromCache(ctx, sub); ok {
 		return &p, nil
@@ -100,9 +126,9 @@ func (s *Service) FindBySub(ctx context.Context, sub string) (*sqlc.Profile, err
 func (s *Service) FindOrCreateMockUser(ctx context.Context) (sqlc.Profile, error) {
 	p, err := s.q.GetProfileByOIDCSub(ctx, MockSub)
 	if errors.Is(err, pgx.ErrNoRows) {
-		p, err = s.q.CreateProfile(ctx, MockSub)
+		p, err = s.createOrGet(ctx, MockSub)
 		if err != nil {
-			return sqlc.Profile{}, fmt.Errorf("create mock user: %w", err)
+			return sqlc.Profile{}, err
 		}
 	} else if err != nil {
 		return sqlc.Profile{}, fmt.Errorf("get mock user: %w", err)
@@ -152,7 +178,7 @@ func (s *Service) fromCache(ctx context.Context, sub string) (sqlc.Profile, bool
 	}
 	var p sqlc.Profile
 	if err := json.Unmarshal([]byte(raw), &p); err != nil {
-		s.log.Warn("invalid JSON in profile cache, dropping", "oidcSub", sub)
+		s.log.Warn("invalid JSON in profile cache, dropping")
 		_ = s.cache.Delete(ctx, cacheKey(sub))
 		return sqlc.Profile{}, false
 	}

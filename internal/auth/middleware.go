@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/uxname/liteend-go/internal/db/sqlc"
+	"github.com/uxname/liteend-go/internal/httperr"
 )
 
 // Profiles is the profile operations the auth layer depends on.
@@ -48,7 +49,7 @@ func (m *Middleware) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user := m.authenticate(r)
 		if user == nil {
-			http.Error(w, `{"statusCode":401,"message":"Unauthorized"}`, http.StatusUnauthorized)
+			httperr.Write(w, http.StatusUnauthorized, "Unauthorized")
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(WithUser(r.Context(), user)))

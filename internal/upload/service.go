@@ -2,12 +2,14 @@
 package upload
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"mime"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +31,15 @@ var ErrNotFound = errors.New("file not found")
 // not in the image allowlist. Callers skip such files rather than failing.
 var ErrDisallowedMime = errors.New("disallowed mime type")
 
+// ErrFileTooLarge is returned by ProcessFile when the written file exceeds
+// UploadMaxFileSize. The partial file is removed before returning.
+var ErrFileTooLarge = errors.New("file too large")
+
 const defaultMime = "application/octet-stream"
+
+// sniffLen is the number of leading bytes inspected for content-based MIME
+// detection (http.DetectContentType only looks at the first 512 bytes).
+const sniffLen = 512
 
 var allowedMimeTypes = map[string]struct{}{ //nolint:gochecknoglobals // static mime allowlist
 	"image/png":  {},
@@ -77,7 +87,19 @@ func AllowedMime(mimetype string) bool {
 // ProcessFile validates and writes a single uploaded file, returning its
 // metadata. It returns ErrDisallowedMime if the content-type is not allowed.
 func (s *Service) ProcessFile(ctx context.Context, originalFilename, mimetype string, body io.Reader) (*SavedFile, error) {
+	// Cheap early reject on the client-declared content-type before touching disk.
 	if !AllowedMime(mimetype) {
+		return nil, ErrDisallowedMime
+	}
+
+	// Content-based validation: sniff the leading bytes and trust the detected
+	// type, not the client-supplied header (which is trivially spoofable).
+	head, body, err := sniff(body)
+	if err != nil {
+		return nil, err
+	}
+	detected := detectMime(head)
+	if !AllowedMime(detected) {
 		return nil, ErrDisallowedMime
 	}
 
@@ -101,6 +123,10 @@ func (s *Service) ProcessFile(ctx context.Context, originalFilename, mimetype st
 		_ = os.Remove(fullPath) //nolint:gosec // content-addressed path under upload root
 		return nil, err
 	}
+	if size > config.UploadMaxFileSize {
+		_ = os.Remove(fullPath) //nolint:gosec // content-addressed path under upload root
+		return nil, ErrFileTooLarge
+	}
 
 	return &SavedFile{
 		Filename:         name,
@@ -109,8 +135,38 @@ func (s *Service) ProcessFile(ctx context.Context, originalFilename, mimetype st
 		originalFilename: originalFilename,
 		extension:        ext,
 		size:             size,
-		mimetype:         mimetype,
+		mimetype:         detected,
 	}, nil
+}
+
+// sniff reads up to sniffLen leading bytes for content detection and returns a
+// reader that replays them ahead of the unread remainder, so the full stream is
+// still written to disk.
+func sniff(body io.Reader) (head []byte, full io.Reader, err error) {
+	buf := make([]byte, sniffLen)
+	n, readErr := io.ReadFull(body, buf)
+	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		return nil, nil, fmt.Errorf("read upload head: %w", readErr)
+	}
+	head = buf[:n]
+	return head, io.MultiReader(bytes.NewReader(head), body), nil
+}
+
+// detectMime returns the sniffed MIME type without any charset parameters.
+func detectMime(head []byte) string {
+	detected := http.DetectContentType(head)
+	if mt, _, err := mime.ParseMediaType(detected); err == nil {
+		return mt
+	}
+	return detected
+}
+
+// RemoveFiles deletes already-written files from disk. Used to roll back a batch
+// when later persistence fails, so a partial upload does not orphan files.
+func (s *Service) RemoveFiles(files []*SavedFile) {
+	for _, f := range files {
+		_ = os.Remove(filepath.Join(s.uploadDir, filepath.FromSlash(f.filepath))) //nolint:gosec // path under upload root
+	}
 }
 
 // SaveMetadata persists metadata for all uploaded files.
@@ -182,8 +238,16 @@ func writeFile(ctx context.Context, path string, body io.Reader) (int64, error) 
 	var written int64
 	var copyErr error
 	go func() {
+		// close(done) runs last; the recover above it turns a panic in io.Copy
+		// (e.g. from a misbehaving body reader) into an error instead of crashing
+		// the process, and still unblocks the select below.
+		defer close(done)
+		defer func() {
+			if r := recover(); r != nil {
+				copyErr = fmt.Errorf("upload copy panicked: %v", r)
+			}
+		}()
 		written, copyErr = io.Copy(f, body)
-		close(done)
 	}()
 
 	select {

@@ -47,7 +47,7 @@ func (r *mutationResolver) AddTestJob(ctx context.Context, message string) (bool
 		return false, err
 	}
 	if r.Queue == nil {
-		return false, errors.New("queue not available")
+		return false, errors.New("service unavailable")
 	}
 	if err := r.Queue.AddTestJob(ctx, message); err != nil {
 		return false, err
@@ -78,7 +78,7 @@ func (r *queryResolver) TestTranslation(ctx context.Context, username string) (s
 		return "", err
 	}
 	if r.I18n == nil {
-		return "", errors.New("i18n not available")
+		return "", errors.New("service unavailable")
 	}
 	return r.I18n.Translate(ctx, "hello", map[string]string{"username": username}), nil
 }
@@ -132,13 +132,18 @@ func (r *subscriptionResolver) ProfileUpdated(ctx context.Context) (<-chan *mode
 		return nil, err
 	}
 	if r.PubSub == nil {
-		return nil, errors.New("subscriptions not available")
+		return nil, errors.New("service unavailable")
 	}
 
 	src := r.PubSub.SubscribeForUser(ctx, user.ID)
 	out := make(chan *model.Profile, 1)
 	go func() {
 		defer close(out)
+		defer func() {
+			if rec := recover(); rec != nil {
+				r.Log.Error("profileUpdated subscription bridge panicked", "panic", rec)
+			}
+		}()
 		for p := range src {
 			select {
 			case out <- toModelProfile(p):

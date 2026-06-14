@@ -6,6 +6,8 @@ import (
 	"runtime/debug"
 
 	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/uxname/liteend-go/internal/httperr"
 )
 
 // Recoverer catches panics, logs them with the request id and stack, and
@@ -24,9 +26,7 @@ func Recoverer(log *slog.Logger) func(http.Handler) http.Handler {
 						slog.String("request_id", middleware.GetReqID(r.Context())),
 						slog.String("stack", string(debug.Stack())),
 					)
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusInternalServerError)
-					_, _ = w.Write([]byte(`{"statusCode":500,"message":"Internal Server Error"}`))
+					httperr.Write(w, http.StatusInternalServerError, "Internal Server Error")
 				}
 			}()
 			next.ServeHTTP(w, r)

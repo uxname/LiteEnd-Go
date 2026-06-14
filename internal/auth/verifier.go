@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 
@@ -18,6 +19,11 @@ type Verifier struct {
 
 // NewVerifier builds a Verifier using a remote JWKS key set.
 func NewVerifier(ctx context.Context, cfg *config.Config) *Verifier {
+	// Bind a timeout-bounded HTTP client to the context so JWKS/issuer fetches
+	// (including lazy refreshes done by RemoteKeySet on later Verify calls) can
+	// never hang forever and stall every authenticated request.
+	httpClient := &http.Client{Timeout: config.OIDCHTTPTimeout}
+	ctx = oidc.ClientContext(ctx, httpClient)
 	keySet := oidc.NewRemoteKeySet(ctx, cfg.OIDCJWKSURI)
 	v := oidc.NewVerifier(cfg.OIDCIssuer, keySet, &oidc.Config{
 		ClientID:             cfg.OIDCAudience,

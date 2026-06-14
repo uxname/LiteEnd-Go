@@ -31,7 +31,7 @@ func New(cfg *config.BackupConfig, log *slog.Logger) *Tool {
 }
 
 func (t *Tool) ext() string {
-	if t.cfg.BackupCompress {
+	if t.cfg.BackupCompressionEnabled {
 		return "sql.gz"
 	}
 	return "sql"
@@ -106,7 +106,7 @@ func (t *Tool) runDump(ctx context.Context, args []string, outFile string) error
 	dump.Env = append(os.Environ(), "PGPASSWORD="+t.cfg.DatabasePassword)
 	dump.Stderr = os.Stderr
 
-	if t.cfg.BackupCompress {
+	if t.cfg.BackupCompressionEnabled {
 		gzip := exec.CommandContext(ctx, "gzip")
 		gzip.Stdout = out
 		gzip.Stderr = os.Stderr

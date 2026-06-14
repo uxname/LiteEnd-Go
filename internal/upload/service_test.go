@@ -37,6 +37,9 @@ func TestAllowedMime(t *testing.T) {
 	require.False(t, AllowedMime("application/pdf"))
 }
 
+// pngMagic is the 8-byte PNG signature that http.DetectContentType matches.
+const pngMagic = "\x89PNG\r\n\x1a\n"
+
 func TestProcessFile_RejectsDisallowedMime(t *testing.T) {
 	t.Parallel()
 	s := newSvc(t)
@@ -45,14 +48,25 @@ func TestProcessFile_RejectsDisallowedMime(t *testing.T) {
 	require.Nil(t, f)
 }
 
+func TestProcessFile_RejectsSpoofedContent(t *testing.T) {
+	t.Parallel()
+	s := newSvc(t)
+	// Declared image/png, but the bytes are plain text — content sniffing must
+	// reject it regardless of the client-supplied content-type.
+	f, err := s.ProcessFile(context.Background(), "evil.png", "image/png", strings.NewReader("this is not an image"))
+	require.ErrorIs(t, err, ErrDisallowedMime, "spoofed content-type must be rejected by sniffing")
+	require.Nil(t, f)
+}
+
 func TestProcessFile_WritesImage(t *testing.T) {
 	t.Parallel()
 	s := newSvc(t)
-	f, err := s.ProcessFile(context.Background(), "pic.png", "image/png", strings.NewReader("\x89PNGdata"))
+	f, err := s.ProcessFile(context.Background(), "pic.png", "image/png", strings.NewReader(pngMagic+"data"))
 	require.NoError(t, err)
 	require.NotNil(t, f)
 	require.True(t, strings.HasSuffix(f.Filename, ".png"))
 	require.True(t, strings.HasPrefix(f.Path, "/uploads/"))
+	require.Equal(t, "image/png", f.mimetype, "stored mime is derived from content, not the header")
 	// file exists on disk
 	abs := filepath.Join(s.uploadDir, f.filepath)
 	_, statErr := os.Stat(abs)
@@ -80,7 +94,7 @@ func TestSafeFileInfo_NotFound(t *testing.T) {
 func TestSafeFileInfo_Valid(t *testing.T) {
 	t.Parallel()
 	s := newSvc(t)
-	f, err := s.ProcessFile(context.Background(), "ok.png", "image/png", strings.NewReader("data"))
+	f, err := s.ProcessFile(context.Background(), "ok.png", "image/png", strings.NewReader(pngMagic+"data"))
 	require.NoError(t, err)
 	full, mime, err := s.SafeFileInfo(f.filepath)
 	require.NoError(t, err)
