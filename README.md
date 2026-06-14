@@ -17,16 +17,33 @@ for the 5-minute orientation before anything else.
   [sqlc](https://sqlc.dev) (Postgres) · [goose](https://github.com/pressly/goose)
   (migrations) · [asynq](https://github.com/hibiken/asynq) (jobs, on Redis) ·
   `slog` (logs) · go-i18n (translations).
-- **Run everything with one command:**
-  ```bash
-  cp .env.example .env && docker compose up --build
-  ```
-  Then open the GraphQL playground: <http://localhost:4000/playground>
-  (login: `admin` / `admin`).
-- **Develop locally with auto-reload:** `task setup` once, then `task dev`.
-- **No login token needed in dev:** `OIDC_MOCK_ENABLED=true` (the default) signs
-  you in as a fake `USER`+`ADMIN`. Send header `x-mock-sub: <id>` to act as a
-  specific user.
+
+---
+
+**To run the project, pick one path:**
+
+### Path A — App on host, DB in Docker (recommended for development)
+Requires [Go 1.26+](https://go.dev/dl), Docker, and `task` (or `go-task` on Arch).
+
+```bash
+task setup       # one-time: copy .env, hooks, codegen, start DB, run migrations
+task start:dev   # hot-reload dev server — rebuilds on every .go change
+```
+
+Verify: <http://localhost:4000/health> → `{"status":"ok"}`
+
+### Path B — Everything in Docker (needs only Docker, no Go required)
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Then open <http://localhost:4000/playground> (login: `admin` / `admin`).
+
+---
+
+- **Dev login is mocked by default** (`OIDC_MOCK_ENABLED=true`) — no real token
+  needed. Send header `x-mock-sub: <id>` to act as a specific user.
 - **On Arch Linux:** the `task` runner is the `go-task` package. Run `go-task`
   wherever this file says `task`.
 
@@ -106,14 +123,14 @@ them.
 ### Option B — app on your machine, database in Docker (best for coding)
 
 ```bash
-task setup     # copies .env, installs git hooks, generates code, builds the CodeGraph index, starts DB+Redis, runs migrations
-task dev       # runs the app and restarts it automatically when you change a .go file
+task setup         # copies .env, installs git hooks, generates code, builds the CodeGraph index, starts DB+Redis, runs migrations
+task start:dev     # runs the app with auto-reload — restarts on every .go change
 ```
 
-`task dev` uses [wgo](https://github.com/bokwoon95/wgo) for auto-reload — save a
+`task start:dev` uses [wgo](https://github.com/bokwoon95/wgo) for auto-reload — save a
 file and the server restarts on its own.
 
-> **First time? Sanity check.** After `task dev` is running, open
+> **First time? Sanity check.** After `task start:dev` is running, open
 > <http://localhost:4000/health> — you should see `{"status":"ok"}`. Then open
 > <http://localhost:4000/playground> (login `admin` / `admin`) and run
 > `query { me { id roles } }`. If both work, your setup is good.
@@ -167,7 +184,7 @@ almost every change.
    go build ./...
    ```
 
-4. **Try it.** `task dev`, then in the playground run `query { version }`.
+4. **Try it.** `task start:dev`, then in the playground run `query { version }`.
 
 5. **Check before committing.** `task check` runs the same gate the
    `pre-commit` hook does (codegen freshness, format, lint, vuln, secrets).
@@ -182,7 +199,8 @@ Run `task --list` to see them all. The ones you'll use most:
 | Command | What it does |
 |---|---|
 | `task setup` | First-time setup (env, hooks, codegen, CodeGraph index, DB, migrations) |
-| `task dev` | Run the app with auto-reload |
+| `task start:dev` | Run the app with auto-reload (wgo, hot-reload) |
+| `task start:prod` | Run the app without hot-reload |
 | `task gen` | Regenerate code (after editing SQL or the GraphQL schema) |
 | `task check` | Full project gate — codegen, format, tidy, build, lint, vuln, secrets (runs on `pre-commit`) |
 | `task test` | Run fast unit tests |
@@ -191,7 +209,7 @@ Run `task --list` to see them all. The ones you'll use most:
 | `task lint` | Check code style and quality |
 | `task fmt` | Auto-format the code |
 | `task vuln` | Check dependencies for known security problems |
-| `task migrate` | Apply database migrations |
+| `task db:migrate` | Apply database migrations |
 | `task migration:create name=add_x` | Create a new migration file |
 | `task db:reset` | Wipe and recreate the dev database |
 | `task codegraph` | Build/refresh the CodeGraph index (no-op if the CLI isn't installed) |

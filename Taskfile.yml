@@ -20,8 +20,8 @@ tasks:
       - task: gen
       - task: codegraph
       - docker compose up -d db redis
-      - task: migrate
-      - echo "Setup done. Start the app with hot-reload via 'task dev'."
+      - task: db:migrate
+      - echo "Setup done. Start the app with hot-reload via 'task start:dev'."
 
   codegraph:
     desc: Build/refresh the local CodeGraph index for AI structural navigation (skipped if CLI absent)
@@ -29,14 +29,14 @@ tasks:
       - cmd: sh -c 'if command -v codegraph >/dev/null 2>&1; then if [ -d .codegraph ]; then codegraph index; else codegraph init -i; fi; else echo "codegraph CLI not installed — skipping index (AI structural navigation)"; fi'
         silent: true
 
-  dev:
+  start:dev:
     desc: Run the server locally with hot-reload (wgo) against the compose DB+Redis
     cmds:
       - docker compose up -d db redis
       - go tool github.com/bokwoon95/wgo run ./cmd/server
 
-  run:
-    desc: Run the server locally (no hot-reload)
+  start:prod:
+    desc: Run the server locally (no hot-reload, production-like)
     cmds:
       - go run ./cmd/server
 
@@ -148,7 +148,7 @@ tasks:
     cmds:
       - go test -race -count=1 -shuffle=on -tags=integration ./...
 
-  migrate:
+  db:migrate:
     desc: Apply database migrations with goose (URL built from DATABASE_* in .env)
     dotenv: ['.env']
     cmds:
@@ -160,7 +160,7 @@ tasks:
       - docker compose down -v db
       - docker compose up -d db
       - sleep 3
-      - task: migrate
+      - task: db:migrate
 
   migration:create:
     desc: "Create a new goose migration (usage: task migration:create name=add_x)"
