@@ -105,8 +105,8 @@ func (s *Service) ProcessFile(ctx context.Context, originalFilename, mimetype st
 
 	relDir := relativeDir(time.Now().UTC())
 	fullDir := filepath.Join(s.uploadDir, relDir)
-	// 0o755: uploaded files are served publicly, and this lets the host user
-	// browse ./data/uploads when bind-mounted.
+	// 0o755: uploaded files are served publicly; group/other read also lets
+	// other tooling inspect the named volume mounted at /app/data/uploads.
 	if err := os.MkdirAll(fullDir, 0o755); err != nil { //nolint:gosec // public upload dir
 		return nil, fmt.Errorf("mkdir uploads: %w", err)
 	}

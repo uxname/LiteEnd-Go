@@ -8,20 +8,6 @@ x-common-restart-policy: &common-restart-policy
   restart: unless-stopped
 
 services:
-  # Prepares the host-mounted ./data subdirs (uploads, backups) with the right
-  # ownership so the non-root app (uid 65532) and backup (uid 70) containers can
-  # write into them. Postgres/Redis keep their internals in named volumes (those
-  # files are root-owned 0700 and not host-browsable anyway).
-  data_init:
-    image: alpine:3.20
-    command: >
-      sh -c "mkdir -p /data/uploads /data/database_backups &&
-             chown -R 65532:65532 /data/uploads &&
-             chown -R 70:70 /data/database_backups"
-    volumes:
-      - ./data:/data
-    restart: "no"
-
   app:
     build:
       context: .
@@ -35,13 +21,11 @@ services:
     ports:
       - "127.0.0.1:${PORT}:${PORT}"
     volumes:
-      - ./data/uploads:/app/data/uploads
+      - uploads:/app/data/uploads
     networks:
       - liteend-net
     logging: *common-logging
     depends_on:
-      data_init:
-        condition: service_completed_successfully
       db:
         condition: service_healthy
       redis:
@@ -110,13 +94,11 @@ services:
       BACKUP_FORMAT: plain
       BACKUP_COMPRESS: "true"
     volumes:
-      - ./data/database_backups:/app/data/database_backups
+      - backups:/app/data/database_backups
     networks:
       - liteend-net
     logging: *common-logging
     depends_on:
-      data_init:
-        condition: service_completed_successfully
       db:
         condition: service_healthy
 
@@ -194,3 +176,5 @@ networks:
 volumes:
   postgres: # Postgres data (internal; inspect via pgweb, not raw files)
   redis: # Redis data (internal; inspect via RedisInsight)
+  uploads: # User-uploaded files (served at /uploads; app uid 65532)
+  backups: # pg_dump archives written by db_backup (uid 70)
