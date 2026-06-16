@@ -155,12 +155,12 @@ func mountRoutes(r chi.Router, d routeDeps) {
 // devLinks builds the links shown on the /dev launcher page.
 func devLinks(cfg *config.Config) []devtools.Link {
 	return []devtools.Link{
-		{Title: "GraphQL Playground", Desc: "Explore & run GraphQL queries/subscriptions", URL: "/playground"},
-		{Title: "Swagger / OpenAPI", Desc: "REST API reference", URL: "/swagger"},
-		{Title: "Health", Desc: "Liveness of DB, Redis & memory", URL: "/health"},
-		{Title: "pgweb (DB browser)", Desc: "Browse Postgres tables — Prisma Studio analog", URL: localhostURL(cfg.DBStudioPort)},
-		{Title: "RedisInsight", Desc: "Inspect Redis keys & streams", URL: localhostURL(cfg.RedisStudioPort)},
-		{Title: "Asynqmon (queue dashboard)", Desc: "Background jobs — Bull Board analog", URL: localhostURL(cfg.AsynqmonPort)},
+		{Title: "GraphQL Playground", Desc: "Explore & run GraphQL queries/subscriptions", URL: "/playground", Icon: "◈"},
+		{Title: "Swagger / OpenAPI", Desc: "REST API reference", URL: "/swagger", Icon: "❡"},
+		{Title: "Health", Desc: "Liveness of DB, Redis & memory", URL: "/health", Icon: "♥"},
+		{Title: "pgweb (DB browser)", Desc: "Browse Postgres tables — Prisma Studio analog", URL: localhostURL(cfg.DBStudioPort), Icon: "⛁"},
+		{Title: "RedisInsight", Desc: "Inspect Redis keys & streams", URL: localhostURL(cfg.RedisStudioPort), Icon: "⚡"},
+		{Title: "Asynqmon (queue dashboard)", Desc: "Background jobs — Bull Board analog", URL: localhostURL(cfg.AsynqmonPort), Icon: "⚙"},
 	}
 }
 
