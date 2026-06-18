@@ -4,7 +4,6 @@ package graph
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -22,7 +21,7 @@ import (
 )
 
 // NewHandler builds the GraphQL HTTP handler (queries, mutations, subscriptions).
-func NewHandler(r *resolver.Resolver, mw *auth.Middleware, log *slog.Logger) http.Handler {
+func NewHandler(r *resolver.Resolver, mw *auth.Middleware) http.Handler {
 	srv := handler.New(generated.NewExecutableSchema(generated.Config{Resolvers: r}))
 
 	srv.AddTransport(transport.Options{})
@@ -51,7 +50,7 @@ func NewHandler(r *resolver.Resolver, mw *auth.Middleware, log *slog.Logger) htt
 	srv.SetQueryCache(lru.New[*ast.QueryDocument](1000))
 	srv.Use(extension.Introspection{})
 	srv.Use(extension.AutomaticPersistedQuery{Cache: lru.New[string](100)})
-	srv.Use(&LoggingExtension{Log: log})
+	srv.Use(&LoggingExtension{})
 
 	srv.SetErrorPresenter(errorPresenter)
 

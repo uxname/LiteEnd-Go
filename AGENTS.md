@@ -60,10 +60,13 @@ This is the Go port of the LiteEnd backend. Read this before changing code.
   `profile.ErrProfileNotFound`, `upload.ErrDisallowedMime`) instead of returning
   `nil, nil`. GraphQL errors are shaped by `internal/graph/errors.go` (adds
   `code`, `statusCode`, `requestId`).
-- **Logging:** use the injected `*slog.Logger`, never the global one
+- **Logging:** in request scope log via `logger.From(ctx)` (carries `request_id`
+  + `user_id`, set by `middleware.ContextLogger` and `auth`); for lifecycle/
+  background code use the injected `*slog.Logger`. Never the global one
   (`sloglint` forbids `slog.Info`/`slog.Default` outside `cmd/`). Sensitive keys
   (`password`, `token`, `authorization`, …) are auto-redacted — still don't log
-  raw secrets.
+  raw secrets. To read logs and triage failures, see
+  [docs/DEBUGGING.md](./docs/DEBUGGING.md).
 
 ## How to add things
 

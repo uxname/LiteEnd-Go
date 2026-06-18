@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"time"
 
 	"github.com/hibiken/asynq"
@@ -89,20 +90,83 @@ type Worker struct {
 // NewWorker builds the asynq server (processor) reusing the shared redis client.
 func NewWorker(rdb redis.UniversalClient, log *slog.Logger) *Worker {
 	srv := asynq.NewServerFromRedisClient(rdb, asynq.Config{
-		Concurrency: concurrency,
-		Logger:      &asynqLogger{log},
+		Concurrency:  concurrency,
+		Logger:       &asynqLogger{log},
+		ErrorHandler: errorHandler(log),
 	})
 	return &Worker{srv: srv, log: log}
 }
 
-// Start runs the worker in the background (non-blocking).
+// Start runs the worker in the background (non-blocking). Every handler is
+// wrapped with panic recovery and an access log (the background-job analog of
+// the HTTP middleware), so failures are never silent.
 func (w *Worker) Start() error {
 	mux := asynq.NewServeMux()
+	mux.Use(w.recoverer, w.accessLog)
 	mux.HandleFunc(TaskTypeTest, w.handleTest)
 	if err := w.srv.Start(mux); err != nil {
 		return fmt.Errorf("start queue worker: %w", err)
 	}
 	return nil
+}
+
+// recoverer turns a panic in a job handler into a logged error (with stack) and
+// a returned error, so asynq retries the task instead of crashing the worker.
+func (w *Worker) recoverer(next asynq.Handler) asynq.Handler {
+	return asynq.HandlerFunc(func(ctx context.Context, t *asynq.Task) (err error) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				w.log.LogAttrs(
+					ctx, slog.LevelError, "job_panic",
+					slog.String("type", t.Type()),
+					slog.Any("panic", rec),
+					slog.String("stack", string(debug.Stack())),
+				)
+				err = fmt.Errorf("panic in job %s: %v", t.Type(), rec)
+			}
+		}()
+		return next.ProcessTask(ctx, t)
+	})
+}
+
+// accessLog logs each job's start and completion with type, id and duration.
+func (w *Worker) accessLog(next asynq.Handler) asynq.Handler {
+	return asynq.HandlerFunc(func(ctx context.Context, t *asynq.Task) error {
+		start := time.Now()
+		taskID, _ := asynq.GetTaskID(ctx)
+		w.log.LogAttrs(
+			ctx, slog.LevelInfo, "job_started",
+			slog.String("type", t.Type()),
+			slog.String("task_id", taskID),
+		)
+		err := next.ProcessTask(ctx, t)
+		w.log.LogAttrs(
+			ctx, slog.LevelInfo, "job_finished",
+			slog.String("type", t.Type()),
+			slog.String("task_id", taskID),
+			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
+			slog.Bool("ok", err == nil),
+		)
+		return err //nolint:wrapcheck // pass the handler error through unchanged for asynq retry semantics
+	})
+}
+
+// errorHandler logs every failed task with its type, id, attempt and error, so
+// background failures are visible even though there is no HTTP response.
+func errorHandler(log *slog.Logger) asynq.ErrorHandler {
+	return asynq.ErrorHandlerFunc(func(ctx context.Context, t *asynq.Task, err error) {
+		taskID, _ := asynq.GetTaskID(ctx)
+		retried, _ := asynq.GetRetryCount(ctx)
+		maxRetry, _ := asynq.GetMaxRetry(ctx)
+		log.LogAttrs(
+			ctx, slog.LevelError, "job_failed",
+			slog.String("type", t.Type()),
+			slog.String("task_id", taskID),
+			slog.Int("attempt", retried),
+			slog.Int("max_retry", maxRetry),
+			slog.String("error", err.Error()),
+		)
+	})
 }
 
 // Stop gracefully shuts the worker down.

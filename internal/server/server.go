@@ -32,6 +32,7 @@ func New(cfg *config.Config, log *slog.Logger, rdb *redis.Client) *Server {
 	// Order mirrors the TS Fastify setup: request-id → recovery → real-ip →
 	// logging → secure-headers → compression → rate-limit → CORS → body-limit.
 	r.Use(chimw.RequestID)
+	r.Use(appmw.ContextLogger(log)) // request-scoped logger (request_id) for logger.From(ctx)
 	r.Use(appmw.Recoverer(log))
 	r.Use(appmw.RealIP) // honours X-Forwarded-For (trustProxy)
 	r.Use(appmw.RequestLogger(log))

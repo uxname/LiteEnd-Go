@@ -8,7 +8,16 @@ import (
 
 	"github.com/uxname/liteend-go/internal/db/sqlc"
 	"github.com/uxname/liteend-go/internal/httperr"
+	"github.com/uxname/liteend-go/internal/logger"
 )
+
+// userContext attaches the authenticated user to ctx and enriches the
+// request-scoped logger with user_id, so every downstream log line is
+// attributable to the user (alongside the request_id added by middleware).
+func userContext(ctx context.Context, user *sqlc.Profile) context.Context {
+	ctx = WithUser(ctx, user)
+	return logger.Into(ctx, logger.From(ctx).With(slog.Int("user_id", int(user.ID))))
+}
 
 // Profiles is the profile operations the auth layer depends on.
 type Profiles interface {
@@ -37,7 +46,7 @@ func NewMiddleware(v *Verifier, p Profiles, log *slog.Logger, mockEnabled bool) 
 func (m *Middleware) Optional(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if user := m.authenticate(r); user != nil {
-			r = r.WithContext(WithUser(r.Context(), user))
+			r = r.WithContext(userContext(r.Context(), user))
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -52,7 +61,7 @@ func (m *Middleware) RequireAuth(next http.Handler) http.Handler {
 			httperr.Write(w, http.StatusUnauthorized, "Unauthorized")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(WithUser(r.Context(), user)))
+		next.ServeHTTP(w, r.WithContext(userContext(r.Context(), user)))
 	})
 }
 

@@ -2,7 +2,6 @@ package upload
 
 import (
 	"context"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +21,7 @@ func (f *fakeWriter) CreateUpload(_ context.Context, _ sqlc.CreateUploadParams) 
 
 func newSvc(t *testing.T) *Service {
 	t.Helper()
-	s := New(&fakeWriter{}, slog.New(slog.DiscardHandler))
+	s := New(&fakeWriter{})
 	s.uploadDir = t.TempDir()
 	return s
 }

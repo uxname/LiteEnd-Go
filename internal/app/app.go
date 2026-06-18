@@ -65,7 +65,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	srv := server.New(cfg, log, rdb.Raw())
 
 	// Domain services.
-	profiles := profile.New(database.Queries, rdb, log)
+	profiles := profile.New(database.Queries, rdb)
 	pubsub := profile.NewPubSub(rdb, log)
 
 	// Auth.
@@ -98,8 +98,8 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 		I18n:     translator,
 		Log:      log,
 	}
-	gqlHandler := graph.NewHandler(res, authMW, log)
-	uploadH := upload.NewHandler(upload.New(database.Queries, log))
+	gqlHandler := graph.NewHandler(res, authMW)
+	uploadH := upload.NewHandler(upload.New(database.Queries))
 
 	mountRoutes(srv.Router(), routeDeps{
 		health:     health.New(database, rdb).Handler(),

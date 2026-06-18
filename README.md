@@ -286,6 +286,13 @@ search. `task setup` builds the index automatically (and skips silently if the
 CLI isn't installed); rebuild it any time with `task codegraph`. The index lives
 in `.codegraph/` and is git-ignored — it's local to your machine.
 
+### Debugging & reading logs
+
+Logs are structured JSON; every request-scoped line carries a `request_id` (and
+`user_id` once authenticated) so you can reconstruct a request end to end. For
+how to read them and a symptom → cause → fix table, see
+[docs/DEBUGGING.md](docs/DEBUGGING.md).
+
 ## Adding your own code
 
 A quick reference (the [walkthrough](#your-first-change-a-walkthrough) shows the

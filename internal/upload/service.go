@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"mime"
 	"net/http"
 	"os"
@@ -19,6 +18,7 @@ import (
 
 	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/db/sqlc"
+	"github.com/uxname/liteend-go/internal/logger"
 )
 
 // ErrForbidden is returned when a path escapes the upload root.
@@ -56,14 +56,13 @@ type Writer interface {
 // Service stores uploaded files on disk and records metadata.
 type Service struct {
 	q         Writer
-	log       *slog.Logger
 	uploadDir string
 }
 
 // New builds an upload Service rooted at <cwd>/data/uploads.
-func New(q Writer, log *slog.Logger) *Service {
+func New(q Writer) *Service {
 	wd, _ := os.Getwd()
-	return &Service{q: q, log: log, uploadDir: filepath.Join(wd, "data", "uploads")}
+	return &Service{q: q, uploadDir: filepath.Join(wd, "data", "uploads")}
 }
 
 // SavedFile is the per-file result returned to the client.
@@ -186,7 +185,7 @@ func (s *Service) SaveMetadata(ctx context.Context, files []*SavedFile, ip strin
 			return fmt.Errorf("save upload metadata: %w", err)
 		}
 	}
-	s.log.Info("files uploaded", "count", len(files))
+	logger.From(ctx).Info("files uploaded", "count", len(files))
 	return nil
 }
 

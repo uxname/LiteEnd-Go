@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/db/sqlc"
+	"github.com/uxname/liteend-go/internal/logger"
 )
 
 // uniqueViolation is the PostgreSQL SQLSTATE for a unique-constraint violation.
@@ -50,12 +50,11 @@ type Cache interface {
 type Service struct {
 	q     Querier
 	cache Cache
-	log   *slog.Logger
 }
 
 // New builds a profile Service.
-func New(q Querier, cache Cache, log *slog.Logger) *Service {
-	return &Service{q: q, cache: cache, log: log}
+func New(q Querier, cache Cache) *Service {
+	return &Service{q: q, cache: cache}
 }
 
 func cacheKey(sub string) string { return config.ProfileCacheKeyPrefix + sub }
@@ -88,7 +87,7 @@ func (s *Service) FindOrCreateBySub(ctx context.Context, sub string) (sqlc.Profi
 func (s *Service) createOrGet(ctx context.Context, sub string) (sqlc.Profile, error) {
 	p, err := s.q.CreateProfile(ctx, sub)
 	if err == nil {
-		s.log.Info("profile created", "profileId", p.ID)
+		logger.From(ctx).Info("profile created", "profileId", p.ID)
 		return p, nil
 	}
 	var pgErr *pgconn.PgError
@@ -178,7 +177,7 @@ func (s *Service) fromCache(ctx context.Context, sub string) (sqlc.Profile, bool
 	}
 	var p sqlc.Profile
 	if err := json.Unmarshal([]byte(raw), &p); err != nil {
-		s.log.Warn("invalid JSON in profile cache, dropping")
+		logger.From(ctx).Warn("invalid JSON in profile cache, dropping")
 		_ = s.cache.Delete(ctx, cacheKey(sub))
 		return sqlc.Profile{}, false
 	}
@@ -191,7 +190,7 @@ func (s *Service) toCache(ctx context.Context, p sqlc.Profile) {
 		return
 	}
 	if err := s.cache.SetString(ctx, cacheKey(p.OidcSub), string(raw), config.ProfileCacheTTL); err != nil {
-		s.log.Warn("profile cache set failed", "error", err)
+		logger.From(ctx).Warn("profile cache set failed", "error", err)
 	}
 }
 

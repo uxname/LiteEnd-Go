@@ -2,7 +2,6 @@ package profile
 
 import (
 	"context"
-	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -114,7 +113,7 @@ func (c *fakeCache) Delete(_ context.Context, keys ...string) error {
 func newService() (*Service, *fakeQuerier, *fakeCache) {
 	q := newFakeQuerier()
 	c := newFakeCache()
-	return New(q, c, slog.New(slog.DiscardHandler)), q, c
+	return New(q, c), q, c
 }
 
 func TestFindOrCreateBySub_CreatesThenCaches(t *testing.T) {

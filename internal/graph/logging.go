@@ -6,7 +6,8 @@ import (
 	"time"
 
 	"github.com/99designs/gqlgen/graphql"
-	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/uxname/liteend-go/internal/logger"
 )
 
 // sensitiveKeys mirrors the TS gql-logging.interceptor redaction list.
@@ -16,10 +17,10 @@ var sensitiveKeys = map[string]struct{}{ //nolint:gochecknoglobals // static red
 }
 
 // LoggingExtension logs each GraphQL operation: type, name, redacted variables,
-// and latency. Implements gqlgen's HandlerExtension/ResponseInterceptor.
-type LoggingExtension struct {
-	Log *slog.Logger
-}
+// and latency. Implements gqlgen's HandlerExtension/ResponseInterceptor. It logs
+// via the request-scoped logger (logger.From(ctx)), so each line inherits the
+// request_id and user_id added by the HTTP middleware.
+type LoggingExtension struct{}
 
 // ExtensionName identifies the extension to gqlgen.
 func (LoggingExtension) ExtensionName() string { return "OperationLogging" }
@@ -28,7 +29,7 @@ func (LoggingExtension) ExtensionName() string { return "OperationLogging" }
 func (LoggingExtension) Validate(graphql.ExecutableSchema) error { return nil }
 
 // InterceptResponse logs the operation once it has been resolved.
-func (e *LoggingExtension) InterceptResponse(ctx context.Context, next graphql.ResponseHandler) *graphql.Response {
+func (*LoggingExtension) InterceptResponse(ctx context.Context, next graphql.ResponseHandler) *graphql.Response {
 	start := time.Now()
 	oc := graphql.GetOperationContext(ctx)
 	resp := next(ctx)
@@ -42,13 +43,12 @@ func (e *LoggingExtension) InterceptResponse(ctx context.Context, next graphql.R
 		opType = string(oc.Operation.Operation)
 	}
 
-	e.Log.LogAttrs(
+	logger.From(ctx).LogAttrs(
 		ctx, slog.LevelInfo, "graphql_operation",
 		slog.String("operation", opName),
 		slog.String("type", opType),
 		slog.Any("variables", redactVariables(oc.Variables)),
-		slog.String("duration", time.Since(start).String()),
-		slog.String("request_id", middleware.GetReqID(ctx)),
+		slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 		slog.Int("errors", len(resp.Errors)),
 	)
 	return resp
