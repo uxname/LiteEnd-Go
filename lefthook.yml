@@ -14,4 +14,4 @@ pre-push:
     test:
       # All tests — unit + integration (testcontainers, needs Docker) — plus
       # the coverage threshold gate (.testcoverage.yml).
-      run: sh -c 'if command -v task >/dev/null 2>&1; then task test:cov:check; else go-task test:cov:check; fi'
+      run: sh -c 'if command -v task >/dev/null 2>&1; then task test:cov; else go-task test:cov; fi'

@@ -150,12 +150,6 @@ tasks:
     cmds:
       - go tool github.com/bokwoon95/wgo -file '.go$' go test -race ./...
 
-  test:cov:
-    desc: Run tests with coverage report
-    cmds:
-      - go test -race -coverprofile=coverage.out ./...
-      - go tool cover -func=coverage.out
-
   test:integration:
     desc: Run integration/e2e tests (requires Docker for testcontainers)
     cmds:
@@ -166,7 +160,7 @@ tasks:
     cmds:
       - go test -race -count=1 -shuffle=on -tags=integration ./...
 
-  test:cov:check:
+  test:cov:
     desc: Run ALL tests with coverage and enforce thresholds (.testcoverage.yml) — requires Docker
     cmds:
       # -coverpkg=./... attributes coverage across packages, so integration

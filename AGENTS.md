@@ -123,9 +123,9 @@ Keep it at **zero issues**.
   sequentially (shared DB). Run with `task test:integration` (needs Docker).
 - **What new code must cover:** the success path and the key failure modes
   (auth/role denial, validation, path-traversal, dedup, cache invalidation).
-- **Coverage:** run `task test:cov` for a merged coverage report when you want to
-  track it. There's no enforced floor (no CI) — keep new code well covered per
-  the rule above.
+- **Coverage:** `task test:cov` runs every test with cross-package coverage and
+  enforces the floor in `.testcoverage.yml` (total ≥ 35%, on `pre-push`). Keep new
+  code well covered per the rule above; ratchet the floor up, never down.
 - Some packages (`queue`, `redis`, `db`) need a live server and are covered by
   the integration suite rather than unit tests — don't duplicate that with mocks.
 
@@ -146,11 +146,11 @@ environment, so the gates live in the `Taskfile` and run locally via git hooks
   7. **Dead code** anywhere in the program (`task deadcode`).
   8. **Vulnerabilities** (`govulncheck`).
   9. **Secrets** detected (`gitleaks`, if installed).
-- **`task test:cov:check`** — every test (unit + integration via testcontainers)
-  plus the coverage-threshold gate (`.testcoverage.yml`, total ≥ 35%), runs on
+- **`task test:cov`** — every test (unit + integration via testcontainers) plus
+  the coverage-threshold gate (`.testcoverage.yml`, total ≥ 35%), runs on
   `pre-push`. Needs Docker. (`task test:all` is the same tests without the
-  coverage gate; `task test:cov` is a quick unit-only coverage report.) Ratchet
-  the threshold up over time — never lower it; add the missing test.
+  coverage gate.) Ratchet the threshold up over time — never lower it; add the
+  missing test.
 
 Install the hooks with `task setup` (or `lefthook install`). The hooks call
 `task` / `go-task` (whichever is on PATH), so the exact same checks run by hand
@@ -162,8 +162,9 @@ A change is done only when ALL of these hold — do not report success otherwise
 
 1. **`task check` passes** (the full gate above — codegen, fmt, tidy, build, lint,
    architecture, dead code, vuln, secrets).
-2. **`task test:all` passes** (unit + integration; needs Docker). If Docker is
-   unavailable, run `task test` and say integration was skipped.
+2. **`task test:cov` passes** (unit + integration + coverage floor; needs Docker).
+   If Docker is unavailable, run `task test` and say integration/coverage were
+   skipped.
 3. **New behaviour has a test.** A new domain rule, resolver, or bug fix ships
    with a unit test that fails without the change. Don't lower coverage.
 4. **New packages are placed in the layer graph.** Add any new `internal/*`
