@@ -12,5 +12,6 @@ pre-commit:
 pre-push:
   commands:
     test:
-      # All tests — unit + integration (testcontainers, needs Docker).
-      run: sh -c 'if command -v task >/dev/null 2>&1; then task test:all; else go-task test:all; fi'
+      # All tests — unit + integration (testcontainers, needs Docker) — plus
+      # the coverage threshold gate (.testcoverage.yml).
+      run: sh -c 'if command -v task >/dev/null 2>&1; then task cover; else go-task cover; fi'

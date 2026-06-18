@@ -143,14 +143,36 @@ environment, so the gates live in the `Taskfile` and run locally via git hooks
   5. **Lint** issues (`golangci-lint`, includes `gci` import ordering).
   6. **Architecture** violations (`task arch` — go-arch-lint against
      `.go-arch-lint.yml`: layering, cross-package call edges, import cycles).
-  7. **Vulnerabilities** (`govulncheck`).
-  8. **Secrets** detected (`gitleaks`, if installed).
-- **`task test:all`** — every test (unit + integration via testcontainers),
-  runs on `pre-push`. Needs Docker.
+  7. **Dead code** anywhere in the program (`task deadcode`).
+  8. **Vulnerabilities** (`govulncheck`).
+  9. **Secrets** detected (`gitleaks`, if installed).
+- **`task cover`** — every test (unit + integration via testcontainers) plus the
+  coverage-threshold gate (`.testcoverage.yml`), runs on `pre-push`. Needs Docker.
+  (`task test:all` is the same tests without the coverage gate.) The total
+  threshold starts at 0 until calibrated from a real run — ratchet it up, never
+  down.
 
 Install the hooks with `task setup` (or `lefthook install`). The hooks call
 `task` / `go-task` (whichever is on PATH), so the exact same checks run by hand
 and in the hook. Run `task check` before committing if you want to fail fast.
+
+### Definition of done (read before claiming a change is finished)
+
+A change is done only when ALL of these hold — do not report success otherwise:
+
+1. **`task check` passes** (the full gate above — codegen, fmt, tidy, build, lint,
+   architecture, dead code, vuln, secrets).
+2. **`task test:all` passes** (unit + integration; needs Docker). If Docker is
+   unavailable, run `task test` and say integration was skipped.
+3. **New behaviour has a test.** A new domain rule, resolver, or bug fix ships
+   with a unit test that fails without the change. Don't lower coverage.
+4. **New packages are placed in the layer graph.** Add any new `internal/*`
+   package to the right component in `.go-arch-lint.yml`; never widen a layer's
+   `mayDependOn` just to make a wrong-direction import compile.
+5. **No new `//nolint` without `// reason`**, and no raised complexity/coverage
+   thresholds to dodge a finding — split the function or add the test instead.
+6. **Report honestly.** If a step was skipped or a test fails, say so with the
+   output; never claim green without having run the gate.
 
 ## Admin dashboards & data
 

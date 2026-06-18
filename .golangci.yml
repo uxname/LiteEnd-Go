@@ -36,6 +36,8 @@ linters:
     # --- style / performance / idioms ---
     - copyloopvar
     - dupword
+    - exhaustive
+    - forbidigo
     - gochecknoglobals
     - gochecknoinits
     - gocritic
@@ -70,6 +72,13 @@ linters:
       allow-unused: false
     exhaustive:
       default-signifies-exhaustive: true
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^fmt\.Print.* # use the injected *slog.Logger, not stdout prints
+          msg: use the injected *slog.Logger instead of fmt.Print*
+        - pattern: ^panic$ # return an error instead of crashing the process
+          msg: return an error instead of panicking
     sloglint:
       no-global: "all" # inject *slog.Logger; never use the package-global logger
     cyclop:
@@ -125,10 +134,12 @@ linters:
           - dupword
           - noctx    # httptest.NewRequest is the idiomatic test API
           - goconst  # repeated literals in tests aid readability
+          - forbidigo # tests may use fmt.Print / panic freely
       # cmd entrypoints log fatally via the global logger before one is built.
       - path: cmd/
         linters:
           - sloglint
+          - forbidigo # entrypoints may print/panic during bootstrap
       # Integration tests share one Postgres/Redis + DB state across cases, so
       # they must run sequentially — t.Parallel() would cause data races.
       # Other relaxations are e2e-helper noise that doesn't affect test validity.
@@ -143,6 +154,7 @@ linters:
           - bodyclose
           - goconst
           - sloglint
+          - forbidigo
 
 formatters:
   enable:

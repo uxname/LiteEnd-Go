@@ -4,6 +4,8 @@ vars:
   BIN: bin
   PKG: github.com/uxname/liteend-go
   GO_ARCH_LINT_VERSION: v1.15.0
+  X_TOOLS_VERSION: v0.46.0
+  GO_TEST_COVERAGE_VERSION: v2.18.8
 
 tasks:
   default:
@@ -80,6 +82,7 @@ tasks:
       - go build ./...
       - task: lint
       - task: arch
+      - task: deadcode
       - task: vuln
       - task: secrets
 
@@ -112,6 +115,14 @@ tasks:
     desc: Verify architecture/layering boundaries (go-arch-lint)
     cmds:
       - go run github.com/fe3dback/go-arch-lint@{{.GO_ARCH_LINT_VERSION}} check
+
+  deadcode:
+    desc: Fail if there is unreachable (dead) code anywhere in the program
+    cmds:
+      # -test treats test files as roots so test-only helpers aren't flagged.
+      - cmd: |
+          out=$(go run golang.org/x/tools/cmd/deadcode@{{.X_TOOLS_VERSION}} -test ./...)
+          if [ -n "$out" ]; then echo "$out"; echo "dead code found — remove it or wire it up"; exit 1; fi
 
   fmt:
     desc: Format code (gci import order + gofumpt)
@@ -154,6 +165,12 @@ tasks:
     desc: Run ALL tests — unit + integration via testcontainers (requires Docker) — run before pushing
     cmds:
       - go test -race -count=1 -shuffle=on -tags=integration ./...
+
+  cover:
+    desc: Run ALL tests with coverage and enforce thresholds (.testcoverage.yml) — requires Docker
+    cmds:
+      - go test -race -count=1 -shuffle=on -tags=integration -coverprofile=coverage.out ./...
+      - go run github.com/vladopajic/go-test-coverage/v2@{{.GO_TEST_COVERAGE_VERSION}} --config=.testcoverage.yml
 
   db:migrate:
     desc: Apply database migrations with goose (URL built from DATABASE_* in .env)

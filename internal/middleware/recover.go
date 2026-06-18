@@ -18,7 +18,7 @@ func Recoverer(log *slog.Logger) func(http.Handler) http.Handler {
 			defer func() {
 				if rec := recover(); rec != nil {
 					if rec == http.ErrAbortHandler { //nolint:errorlint // sentinel comparison per net/http
-						panic(rec)
+						panic(rec) //nolint:forbidigo // re-raise ErrAbortHandler so net/http aborts the connection
 					}
 					log.LogAttrs(
 						r.Context(), slog.LevelError, "panic_recovered",

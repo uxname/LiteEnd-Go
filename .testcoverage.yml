@@ -1,0 +1,21 @@
+# Test-coverage thresholds, enforced by `task cover` (full unit + integration
+# run, needs Docker). go-test-coverage reads the profile below and fails if
+# coverage drops under the thresholds.
+#
+# CALIBRATION: `threshold.total` starts at 0 (gate wired but non-blocking) until
+# it is set from a real `task cover` run that includes integration tests. Once
+# calibrated, ratchet it UP over time — never lower it to dodge a finding; add
+# the missing test instead.
+profile: coverage.out
+
+# Generated code and thin entrypoints carry no testable logic of our own.
+exclude:
+  paths:
+    - ^github\.com/uxname/liteend-go/internal/graph/generated
+    - ^github\.com/uxname/liteend-go/internal/graph/model
+    - ^github\.com/uxname/liteend-go/internal/db/sqlc
+    - ^github\.com/uxname/liteend-go/cmd/
+
+threshold:
+  # TODO(calibrate): set from the real `task cover` total, then bump per release.
+  total: 0
