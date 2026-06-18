@@ -166,7 +166,7 @@ tasks:
     cmds:
       - go test -race -count=1 -shuffle=on -tags=integration ./...
 
-  cover:
+  test:cov:check:
     desc: Run ALL tests with coverage and enforce thresholds (.testcoverage.yml) — requires Docker
     cmds:
       # -coverpkg=./... attributes coverage across packages, so integration

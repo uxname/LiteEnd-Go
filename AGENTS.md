@@ -146,10 +146,11 @@ environment, so the gates live in the `Taskfile` and run locally via git hooks
   7. **Dead code** anywhere in the program (`task deadcode`).
   8. **Vulnerabilities** (`govulncheck`).
   9. **Secrets** detected (`gitleaks`, if installed).
-- **`task cover`** — every test (unit + integration via testcontainers) plus the
-  coverage-threshold gate (`.testcoverage.yml`, total ≥ 35%), runs on `pre-push`.
-  Needs Docker. (`task test:all` is the same tests without the coverage gate.)
-  Ratchet the threshold up over time — never lower it; add the missing test.
+- **`task test:cov:check`** — every test (unit + integration via testcontainers)
+  plus the coverage-threshold gate (`.testcoverage.yml`, total ≥ 35%), runs on
+  `pre-push`. Needs Docker. (`task test:all` is the same tests without the
+  coverage gate; `task test:cov` is a quick unit-only coverage report.) Ratchet
+  the threshold up over time — never lower it; add the missing test.
 
 Install the hooks with `task setup` (or `lefthook install`). The hooks call
 `task` / `go-task` (whichever is on PATH), so the exact same checks run by hand
