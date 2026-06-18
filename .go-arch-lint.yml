@@ -1,0 +1,61 @@
+version: 3
+workdir: .
+
+# Vendor (third-party) imports are governed by golangci-lint (depguard/gosec etc.);
+# go-arch-lint here owns the INTERNAL layering only.
+allow:
+  depOnAnyVendor: true
+
+# Unit and integration tests may reach across layers via helpers — exclude them
+# so test scaffolding does not produce false architecture violations.
+excludeFiles:
+  - "_test\\.go$"
+
+components:
+  entrypoint:     { in: cmd/** }
+  composition:    { in: internal/app }
+  transport:
+    in:
+      - internal/server
+      - internal/middleware
+      - internal/devtools
+      - internal/graph
+      - internal/graph/**     # generated, model, resolver
+  domain:
+    in:
+      - internal/auth
+      - internal/profile
+      - internal/upload
+      - internal/queue
+  infrastructure:
+    in:
+      - db                    # top-level embed package (migrations/queries assets)
+      - internal/db
+      - internal/db/**        # sqlc generated
+      - internal/redis
+      - internal/i18n
+      - internal/health
+      - internal/backup
+  # cross-cutting helpers — importable by any layer
+  config:  { in: internal/config }
+  logger:  { in: internal/logger }
+  version: { in: internal/version }
+  httperr: { in: internal/httperr }
+
+commonComponents:
+  - config
+  - logger
+  - version
+  - httperr
+
+deps:
+  entrypoint:
+    mayDependOn: [composition, transport, domain, infrastructure]
+  composition:
+    mayDependOn: [transport, domain, infrastructure]
+  transport:
+    mayDependOn: [transport, domain, infrastructure]   # self: graph↔resolver, server→middleware
+  domain:
+    mayDependOn: [domain, infrastructure]               # self: auth uses profile
+  infrastructure:
+    mayDependOn: [infrastructure]                       # self: internal/db → db, sqlc

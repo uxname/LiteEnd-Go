@@ -38,11 +38,18 @@ This is the Go port of the LiteEnd backend. Read this before changing code.
 - **No DI framework.** Dependencies are explicit constructor args. Define narrow
   interfaces at the consumer (e.g. `profile.Querier`, `profile.Cache`,
   `auth.Profiles`, `resolver.ProfileService`) to keep packages testable.
-- **Layering (enforced by depguard).** Dependencies point inward: domain/infra
-  packages (`profile`, `upload`, `queue`, `auth`, `redis`, `db`, `i18n`,
-  `health`, `backup`, `middleware`, `logger`, `config`) must NOT import the
-  transport layer (`internal/graph`, `internal/server`, `internal/app`). `task
-  lint` fails if they do.
+- **Layering (enforced by go-arch-lint + depguard).** Dependencies point inward.
+  The component model is declared in `.go-arch-lint.yml` (the source of truth):
+  `entrypoint → composition → transport → domain → infrastructure`, plus
+  cross-cutting commons (`config`, `logger`, `version`, `httperr`). `task arch`
+  builds the full component graph, also catches cross-package method-call/DI
+  edges (deepScan) and import cycles. As a finer second gate, `depguard` in
+  `.golangci.yml` forbids domain/infra packages (`profile`, `upload`, `queue`,
+  `auth`, `redis`, `db`, `i18n`, `health`, `backup`, `middleware`, `logger`,
+  `config`) from importing the transport layer (`internal/graph`,
+  `internal/server`, `internal/app`). Both run inside `task check`, so a layering
+  break fails the gate. When you add a package, place it in the right component in
+  `.go-arch-lint.yml`.
 - **Auth:** the authenticated user lives in `context.Context`
   (`auth.WithUser` / `auth.UserFromContext`). Enforce access in resolvers with
   `auth.Require(ctx)` / `auth.RequireRole(ctx, role)`. Roles come from the DB
@@ -134,8 +141,10 @@ environment, so the gates live in the `Taskfile` and run locally via git hooks
   3. **Formatting** not gofumpt-clean (`task fmt:check`).
   4. **Build** errors (`go build ./...`).
   5. **Lint** issues (`golangci-lint`, includes `gci` import ordering).
-  6. **Vulnerabilities** (`govulncheck`).
-  7. **Secrets** detected (`gitleaks`, if installed).
+  6. **Architecture** violations (`task arch` — go-arch-lint against
+     `.go-arch-lint.yml`: layering, cross-package call edges, import cycles).
+  7. **Vulnerabilities** (`govulncheck`).
+  8. **Secrets** detected (`gitleaks`, if installed).
 - **`task test:all`** — every test (unit + integration via testcontainers),
   runs on `pre-push`. Needs Docker.
 

@@ -3,6 +3,7 @@ version: "3"
 vars:
   BIN: bin
   PKG: github.com/uxname/liteend-go
+  GO_ARCH_LINT_VERSION: v1.15.0
 
 tasks:
   default:
@@ -78,6 +79,7 @@ tasks:
       - task: fmt:check
       - go build ./...
       - task: lint
+      - task: arch
       - task: vuln
       - task: secrets
 
@@ -105,6 +107,11 @@ tasks:
     desc: Run golangci-lint with autofixes
     cmds:
       - go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run --fix
+
+  arch:
+    desc: Verify architecture/layering boundaries (go-arch-lint)
+    cmds:
+      - go run github.com/fe3dback/go-arch-lint@{{.GO_ARCH_LINT_VERSION}} check
 
   fmt:
     desc: Format code (gci import order + gofumpt)
