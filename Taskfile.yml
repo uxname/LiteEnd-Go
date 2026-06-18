@@ -169,7 +169,9 @@ tasks:
   cover:
     desc: Run ALL tests with coverage and enforce thresholds (.testcoverage.yml) — requires Docker
     cmds:
-      - go test -race -count=1 -shuffle=on -tags=integration -coverprofile=coverage.out ./...
+      # -coverpkg=./... attributes coverage across packages, so integration
+      # tests in test/ count toward the packages they exercise (db, server, …).
+      - go test -race -count=1 -shuffle=on -tags=integration -coverpkg=./... -coverprofile=coverage.out ./...
       - go run github.com/vladopajic/go-test-coverage/v2@{{.GO_TEST_COVERAGE_VERSION}} --config=.testcoverage.yml
 
   db:migrate:
