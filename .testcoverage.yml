@@ -3,9 +3,14 @@
 # coverage drops under the thresholds.
 #
 # `threshold.total` is calibrated from a real `task cover` run (unit +
-# integration with -coverpkg, ~37.9% at calibration) and set a few points below
+# integration with -coverpkg, ~39.9% at calibration) and set a few points below
 # with headroom. Ratchet it UP over time — never lower it to dodge a finding;
 # add the missing test instead.
+#
+# Per-package `override` floors below are the backend's TDD teeth: new
+# business logic in a domain package without tests drops that package under its
+# floor and fails the gate — it cannot hide in the aggregate total. Add tests in
+# the same change and ratchet the floor up. (See backend/AGENTS.md → TDD discipline.)
 profile: coverage.out
 
 # Generated code and thin entrypoints carry no testable logic of our own.
@@ -17,4 +22,24 @@ exclude:
     - ^github\.com/uxname/liteend-go/cmd/
 
 threshold:
-  total: 35
+  total: 38
+
+# Per-package floors = the backend's TDD teeth. Each `override` pins a specific
+# domain/business package above a floor (calibrated a few points below its real
+# coverage), so new logic added there WITHOUT tests drops the package under its
+# floor and fails the gate — it cannot hide in the aggregate total. Packages not
+# listed here are governed by `threshold.total` only. Ratchet these UP as
+# coverage grows; never lower one to dodge a finding — add the missing test.
+# NOTE: override `path` is the MODULE-RELATIVE package path (no module prefix),
+# unlike `exclude.paths` above which match the full import path.
+override:
+  - path: ^internal/graph/resolver$
+    threshold: 90
+  - path: ^internal/queue$
+    threshold: 75
+  - path: ^internal/upload$
+    threshold: 60
+  - path: ^internal/profile$
+    threshold: 60
+  - path: ^internal/auth$
+    threshold: 60

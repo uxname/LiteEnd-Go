@@ -118,6 +118,22 @@ Keep it at **zero issues**.
 
 ## Testing
 
+### TDD discipline (the same force as the frontend's trio rule) — READ THIS
+New business logic — a resolver, service, job, or middleware — is written
+**test-first**: add the unit test that encodes the behaviour (success path +
+key failure modes), watch it fail, then implement to green. This is
+machine-enforced, not a convention:
+
+- `task test:cov` enforces **per-package coverage floors** in `.testcoverage.yml`
+  (`override` block): `graph/resolver` ≥ 90, `queue` ≥ 75, `profile`/`auth`/
+  `upload` ≥ 60, plus total ≥ 38. New logic added to a domain package without
+  tests drops that package under its floor and **fails the gate** — it cannot
+  hide in the aggregate total.
+- Ratchet the floors **up** as coverage grows; never lower one to dodge a
+  finding — add the missing test.
+- The gate runs on `pre-push` AND in CI (`.github/workflows/ci.yml` →
+  `task test:cov`), so `--no-verify` cannot bypass it.
+
 - **Unit tests** (no build tag) use in-memory fakes — fast, no Docker. Run with
   `task test` (race detector on). Put `t.Parallel()` at the top of each unit test
   (the linter enforces it); the exception is tests that call `t.Setenv`.
@@ -127,8 +143,9 @@ Keep it at **zero issues**.
 - **What new code must cover:** the success path and the key failure modes
   (auth/role denial, validation, path-traversal, dedup, cache invalidation).
 - **Coverage:** `task test:cov` runs every test with cross-package coverage and
-  enforces the floor in `.testcoverage.yml` (total ≥ 35%, on `pre-push`). Keep new
-  code well covered per the rule above; ratchet the floor up, never down.
+  enforces `.testcoverage.yml` (total ≥ 38% **plus** the per-package floors above,
+  on `pre-push` and in CI). Keep new code well covered per the rule above; ratchet
+  the floors up, never down.
 - Some packages (`queue`, `redis`, `db`) need a live server and are covered by
   the integration suite rather than unit tests — don't duplicate that with mocks.
 
@@ -150,8 +167,8 @@ environment, so the gates live in the `Taskfile` and run locally via git hooks
   8. **Vulnerabilities** (`govulncheck`).
   9. **Secrets** detected (`gitleaks`, if installed).
 - **`task test:cov`** — every test (unit + integration via testcontainers) plus
-  the coverage-threshold gate (`.testcoverage.yml`, total ≥ 35%), runs on
-  `pre-push`. Needs Docker. (`task test:all` is the same tests without the
+  the coverage-threshold gate (`.testcoverage.yml`, total ≥ 38% + per-package
+  floors), runs on `pre-push` **and in CI**. Needs Docker. (`task test:all` is the same tests without the
   coverage gate.) Ratchet the threshold up over time — never lower it; add the
   missing test.
 
