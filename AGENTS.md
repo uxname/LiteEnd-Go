@@ -28,6 +28,8 @@ This is the Go port of the LiteEnd backend. Read this before changing code.
 5. **Migrations are forward-only and embedded.** Create one with
    `task migration:create name=...` (goose format under `db/migrations/`). They
    run programmatically at startup — don't rely on a goose CLI in production.
+6. **English-only in the repo.** All code, comments, identifiers, and commit
+   messages are written in English (repo-wide rule — see root `AGENTS.md`).
 
 ## Architecture conventions
 
@@ -131,8 +133,8 @@ machine-enforced, not a convention:
   hide in the aggregate total.
 - Ratchet the floors **up** as coverage grows; never lower one to dodge a
   finding — add the missing test.
-- The gate runs on `pre-push` AND in CI (`.github/workflows/ci.yml` →
-  `task test:cov`), so `--no-verify` cannot bypass it.
+- The gate runs on `pre-push` (`task test:cov`). There is no CI, so `--no-verify`
+  bypasses it locally — don't.
 
 - **Unit tests** (no build tag) use in-memory fakes — fast, no Docker. Run with
   `task test` (race detector on). Put `t.Parallel()` at the top of each unit test
@@ -144,7 +146,7 @@ machine-enforced, not a convention:
   (auth/role denial, validation, path-traversal, dedup, cache invalidation).
 - **Coverage:** `task test:cov` runs every test with cross-package coverage and
   enforces `.testcoverage.yml` (total ≥ 38% **plus** the per-package floors above,
-  on `pre-push` and in CI). Keep new code well covered per the rule above; ratchet
+  on `pre-push`). Keep new code well covered per the rule above; ratchet
   the floors up, never down.
 - Some packages (`queue`, `redis`, `db`) need a live server and are covered by
   the integration suite rather than unit tests — don't duplicate that with mocks.
@@ -168,7 +170,7 @@ environment, so the gates live in the `Taskfile` and run locally via git hooks
   9. **Secrets** detected (`gitleaks`, if installed).
 - **`task test:cov`** — every test (unit + integration via testcontainers) plus
   the coverage-threshold gate (`.testcoverage.yml`, total ≥ 38% + per-package
-  floors), runs on `pre-push` **and in CI**. Needs Docker. (`task test:all` is the same tests without the
+  floors), runs on `pre-push`. Needs Docker. (`task test:all` is the same tests without the
   coverage gate.) Ratchet the threshold up over time — never lower it; add the
   missing test.
 
