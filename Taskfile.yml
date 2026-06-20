@@ -6,13 +6,6 @@ vars:
   GO_ARCH_LINT_VERSION: v1.15.0
   X_TOOLS_VERSION: v0.46.0
   GO_TEST_COVERAGE_VERSION: v2.18.8
-  # Version stamp, computed from git on the host. Used by `build` (ldflags) and
-  # by `docker:build`/`docker:up` (build args) so the deployed version is always
-  # captured automatically — no need to remember to pass SOURCE_COMMIT.
-  COMMIT:
-    sh: git rev-parse --short HEAD 2>/dev/null || echo unknown
-  BUILD_TIME:
-    sh: date -u +%Y-%m-%dT%H:%M:%SZ
 
 tasks:
   default:
@@ -49,16 +42,6 @@ tasks:
     desc: Run the server locally (no hot-reload, production-like)
     cmds:
       - go run ./cmd/server
-
-  docker:build:
-    desc: Build the Docker image with the current git commit stamped in (no SOURCE_COMMIT to remember)
-    cmds:
-      - SOURCE_COMMIT="{{.COMMIT}}" BUILD_TIME="{{.BUILD_TIME}}" docker compose build
-
-  docker:up:
-    desc: Build (version-stamped) and start the full stack in the background
-    cmds:
-      - SOURCE_COMMIT="{{.COMMIT}}" BUILD_TIME="{{.BUILD_TIME}}" docker compose up -d --build
 
   gen:
     desc: Run all code generators (sqlc, gqlgen) and format the output
@@ -115,7 +98,8 @@ tasks:
       - go build -o {{.BIN}}/dbbackup ./cmd/dbbackup
       - go build -o {{.BIN}}/dbrestore ./cmd/dbrestore
     vars:
-      LDFLAGS: -X {{.PKG}}/internal/version.Commit={{.COMMIT}} -X {{.PKG}}/internal/version.BuildTime={{.BUILD_TIME}}
+      LDFLAGS:
+        sh: 'echo "-X {{.PKG}}/internal/version.Commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown) -X {{.PKG}}/internal/version.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"'
 
   lint:
     desc: Run golangci-lint

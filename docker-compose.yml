@@ -12,14 +12,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      # Version stamp compiled into the binary (logged at startup as "version"/
-      # "commit", and reported by the /health endpoint). The image has no .git,
-      # so inject it via build args. Prefer `task docker:build` / `task docker:up`
-      # — they fill COMMIT/BUILD_TIME from git automatically. A bare
-      # `docker compose build` still works and just reports "unknown".
-      args:
-        COMMIT: ${SOURCE_COMMIT:-unknown}
-        BUILD_TIME: ${BUILD_TIME:-unknown}
     <<: *common-restart-policy
     env_file:
       - .env

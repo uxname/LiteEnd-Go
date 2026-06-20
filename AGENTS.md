@@ -197,16 +197,6 @@ A change is done only when ALL of these hold — do not report success otherwise
 6. **Report honestly.** If a step was skipped or a test fails, say so with the
    output; never claim green without having run the gate.
 
-## Docker (images & version stamping)
-
-- `task docker:build` — build the image, auto-stamping the git commit + build time
-  (`COMMIT`/`BUILD_TIME` → ldflags), so the running version is logged at startup and
-  returned by `/health`. Use this instead of a bare `docker compose build` (which
-  would report `unknown`).
-- `task docker:up` — same stamp, then build + start the full stack in the background.
-- The image has no `.git` (it's a submodule pointer in the meta-repo), so the version
-  is injected as a build arg — that's why the wrapper tasks exist.
-
 ## Admin dashboards & data
 
 - **Auth is mandatory on every admin surface.** External dashboards (pgweb,
