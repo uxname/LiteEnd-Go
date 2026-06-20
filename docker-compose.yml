@@ -12,6 +12,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Version stamp compiled into the binary (logged at startup as "version"/
+      # "commit", and reported by the /health endpoint). The image has no .git,
+      # so inject these from your build/deploy pipeline, e.g.:
+      #   SOURCE_COMMIT="$(git rev-parse --short HEAD)" docker compose build
+      args:
+        COMMIT: ${SOURCE_COMMIT:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
     <<: *common-restart-policy
     env_file:
       - .env
