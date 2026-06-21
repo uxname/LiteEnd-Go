@@ -18,7 +18,8 @@ tasks:
     cmds:
       - cmd: cp -n .env.example .env || true
         silent: true
-      - go tool github.com/bokwoon95/wgo version >/dev/null 2>&1 || true
+      - cmd: go build -o {{if eq OS "windows"}}NUL{{else}}/dev/null{{end}} github.com/bokwoon95/wgo || true
+        silent: true
       - lefthook install || echo "lefthook not installed; run 'go install github.com/evilmartians/lefthook@latest'"
       - task: gen
       - docker compose up -d db redis
@@ -186,6 +187,15 @@ tasks:
     desc: Verify module checksums
     cmds:
       - go mod verify
+
+  update:
+    desc: Bump all module + tool deps to latest minor/patch, tidy, regen, then full check (Renovate stays primary)
+    cmds:
+      - go get -u ./...
+      - go get -u tool        # update tool deps from the tool() block in go.mod (Go 1.24+ meta-pattern)
+      - go mod tidy
+      - task: gen             # sqlc/gqlgen tool versions may have changed — regenerate (gen also runs fmt)
+      - task: check           # build + tidy:check + fmt:check + lint + arch + deadcode + vuln + secrets as gate
 
   tidy:
     desc: Tidy go modules
