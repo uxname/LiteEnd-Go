@@ -2,8 +2,11 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/uxname/liteend-go/internal/db/sqlc"
@@ -45,7 +48,9 @@ func NewMiddleware(v *Verifier, p Profiles, log *slog.Logger, mockEnabled bool) 
 // left to resolver/route guards (Require / RequireRole / RequireAuth).
 func (m *Middleware) Optional(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if user := m.authenticate(r); user != nil {
+		// Optional never rejects (enforcement is left to resolver guards): a
+		// provider outage simply yields an anonymous request, already logged below.
+		if user, _ := m.resolve(r.Context(), bearerToken(r), r.Header.Get("x-mock-sub")); user != nil {
 			r = r.WithContext(userContext(r.Context(), user))
 		}
 		next.ServeHTTP(w, r)
@@ -56,7 +61,14 @@ func (m *Middleware) Optional(next http.Handler) http.Handler {
 // e.g. POST /upload).
 func (m *Middleware) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user := m.authenticate(r)
+		user, providerDown := m.resolve(r.Context(), bearerToken(r), r.Header.Get("x-mock-sub"))
+		if providerDown {
+			// The token may well be valid — we just can't reach the OIDC provider
+			// to check it. 503 (not 401) tells the client to retry rather than
+			// re-authenticate.
+			httperr.Write(w, http.StatusServiceUnavailable, "Authentication provider unavailable")
+			return
+		}
 		if user == nil {
 			httperr.Write(w, http.StatusUnauthorized, "Unauthorized")
 			return
@@ -65,43 +77,67 @@ func (m *Middleware) RequireAuth(next http.Handler) http.Handler {
 	})
 }
 
-// authenticate resolves the user for an HTTP request or returns nil.
-func (m *Middleware) authenticate(r *http.Request) *sqlc.Profile {
-	return m.AuthenticateCreds(r.Context(), bearerToken(r), r.Header.Get("x-mock-sub"))
+// AuthenticateCreds resolves a user from raw credentials, returning nil when
+// authentication fails for any reason. Shared by the HTTP middleware (headers)
+// and the WebSocket init func (connection payload), so subscriptions
+// authenticate exactly like queries/mutations.
+func (m *Middleware) AuthenticateCreds(ctx context.Context, bearer, mockSub string) *sqlc.Profile {
+	user, _ := m.resolve(ctx, bearer, mockSub)
+	return user
 }
 
-// AuthenticateCreds resolves a user from raw credentials. It is shared by the
-// HTTP middleware (headers) and the WebSocket init func (connection payload),
-// so subscriptions authenticate exactly like queries/mutations.
-func (m *Middleware) AuthenticateCreds(ctx context.Context, bearer, mockSub string) *sqlc.Profile {
+// resolve authenticates raw credentials and reports whether failure was due to
+// the OIDC provider being unreachable (vs. a missing/invalid token), so callers
+// can return 503 instead of a misleading 401.
+func (m *Middleware) resolve(ctx context.Context, bearer, mockSub string) (user *sqlc.Profile, providerDown bool) {
 	if m.mockEnabled {
 		if mockSub != "" {
 			if p, err := m.profiles.FindBySub(ctx, mockSub); err == nil && p != nil {
-				return p
+				return p, false
 			}
 		}
 		p, err := m.profiles.FindOrCreateMockUser(ctx)
 		if err != nil {
 			m.log.Error("mock user resolution failed", "error", err)
-			return nil
+			return nil, false
 		}
-		return &p
+		return &p, false
 	}
 
 	if bearer == "" {
-		return nil
+		return nil, false
 	}
 	sub, err := m.verifier.Verify(ctx, bearer)
 	if err != nil {
-		m.log.Debug("token verification failed", "error", err)
-		return nil
+		if isProviderUnavailable(err) {
+			m.log.Warn("oidc provider unavailable during token verification", "error", err)
+			return nil, true
+		}
+		// A failed verification is a security-relevant event; log at Warn so it is
+		// visible at production log levels (not just Debug).
+		m.log.Warn("token verification failed", "error", err)
+		return nil, false
 	}
 	p, err := m.profiles.FindOrCreateBySub(ctx, sub)
 	if err != nil {
 		m.log.Error("find-or-create profile failed", "error", err)
-		return nil
+		return nil, false
 	}
-	return &p
+	return &p, false
+}
+
+// isProviderUnavailable reports whether err indicates the OIDC provider could
+// not be reached (network/timeout), as opposed to a genuinely invalid token.
+func isProviderUnavailable(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	var urlErr *url.Error
+	return errors.As(err, &urlErr)
 }
 
 // StripBearer extracts the token from an "Authorization: Bearer ..." value.

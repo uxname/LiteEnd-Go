@@ -79,6 +79,13 @@ func Load() (*Config, error) {
 		return nil, errors.New("OIDC_MOCK_ENABLED must not be true in production")
 	}
 
+	// An empty CORS_ORIGIN makes go-chi/cors allow every origin; combined with
+	// AllowCredentials that is unsafe in production, so require an explicit
+	// allowlist there (fail-fast). In development an empty value is tolerated.
+	if cfg.IsProduction() && len(cfg.CORSOrigin) == 0 {
+		return nil, errors.New("CORS_ORIGIN must be set to an explicit origin allowlist in production")
+	}
+
 	return cfg, nil
 }
 

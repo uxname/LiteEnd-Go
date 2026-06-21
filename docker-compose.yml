@@ -7,12 +7,33 @@ x-common-logging: &common-logging
 x-common-restart-policy: &common-restart-policy
   restart: unless-stopped
 
+# Resource limits cap each container so a leak or runaway in one service cannot
+# exhaust host CPU/memory and take down the others. Honored by `docker compose
+# up` (Compose v2). Tune to the target host.
+x-app-resources: &app-resources
+  resources:
+    limits:
+      cpus: "1.5"
+      memory: 512M
+x-db-resources: &db-resources
+  resources:
+    limits:
+      cpus: "2.0"
+      memory: 1G
+x-small-resources: &small-resources
+  resources:
+    limits:
+      cpus: "0.5"
+      memory: 256M
+
 services:
   app:
     build:
       context: .
       dockerfile: Dockerfile
     <<: *common-restart-policy
+    deploy:
+      <<: *app-resources
     env_file:
       - .env
     environment:
@@ -40,6 +61,8 @@ services:
   db:
     image: postgres:18.1-alpine
     <<: *common-restart-policy
+    deploy:
+      <<: *db-resources
     environment:
       POSTGRES_USER: ${DATABASE_USER}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
@@ -61,6 +84,8 @@ services:
   redis:
     image: redis:8.4-alpine
     <<: *common-restart-policy
+    deploy:
+      <<: *small-resources
     command: >
       redis-server --save 20 1 --loglevel warning
       --requirepass ${REDIS_PASSWORD} --port ${REDIS_PORT}
@@ -82,6 +107,8 @@ services:
       context: .
       dockerfile: Dockerfile.dbbackup
     <<: *common-restart-policy
+    deploy:
+      <<: *small-resources
     environment:
       DATABASE_HOST: db
       DATABASE_PORT: ${DATABASE_PORT}
@@ -108,6 +135,8 @@ services:
   db_studio:
     image: sosedoff/pgweb:latest
     <<: *common-restart-policy
+    deploy:
+      <<: *small-resources
     environment:
       DATABASE_URL: postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@db:${DATABASE_PORT}/${DATABASE_NAME}?sslmode=disable
     networks:
@@ -122,6 +151,8 @@ services:
   redis_studio:
     image: redis/redisinsight:latest
     <<: *common-restart-policy
+    deploy:
+      <<: *small-resources
     environment:
       RI_REDIS_HOST: redis
       RI_REDIS_PORT: ${REDIS_PORT}
@@ -138,6 +169,8 @@ services:
   asynqmon:
     image: hibiken/asynqmon:latest
     <<: *common-restart-policy
+    deploy:
+      <<: *small-resources
     command:
       - "--redis-addr=redis:${REDIS_PORT}"
       - "--redis-password=${REDIS_PASSWORD}"
@@ -152,6 +185,8 @@ services:
   admin_proxy:
     image: caddy:2-alpine
     <<: *common-restart-policy
+    deploy:
+      <<: *small-resources
     environment:
       ADMIN_USER: ${ADMIN_USER}
       ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH}

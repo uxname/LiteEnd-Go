@@ -202,27 +202,20 @@ func TestSubscription_ProfileUpdated(t *testing.T) {
 			"query": `subscription{ profileUpdated { displayName } }`,
 		},
 	})
-	time.Sleep(300 * time.Millisecond) // let the subscription register
 
-	// trigger an update over HTTP
-	gql(t, `mutation($i:ProfileUpdateInput!){updateProfile(input:$i){displayName}}`,
-		map[string]any{"i": map[string]any{"displayName": "WSName"}}, nil)
-
-	// expect a "next" message carrying the updated profile
-	got := false
-	deadline := time.Now().Add(6 * time.Second)
-	for time.Now().Before(deadline) {
+	// The subscription registers asynchronously on the server. Instead of a fixed
+	// sleep (flaky on slow machines), retry the update until the subscription
+	// delivers a "next" event. Re-publishing the same value is harmless.
+	require.Eventually(t, func() bool {
+		gql(t, `mutation($i:ProfileUpdateInput!){updateProfile(input:$i){displayName}}`,
+			map[string]any{"i": map[string]any{"displayName": "WSName"}}, nil)
 		var msg map[string]any
-		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 		if err := conn.ReadJSON(&msg); err != nil {
-			break
+			return false
 		}
-		if msg["type"] == "next" {
-			got = true
-			break
-		}
-	}
-	require.True(t, got, "should receive a subscription event after profile update")
+		return msg["type"] == "next"
+	}, 10*time.Second, 100*time.Millisecond, "should receive a subscription event after profile update")
 }
 
 // --- helpers ---

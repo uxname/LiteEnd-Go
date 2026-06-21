@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -27,7 +28,18 @@ func New(ctx context.Context, cfg *config.Config, _ *slog.Logger) (*DB, error) {
 
 	poolCfg.MaxConns = config.DBPoolMax
 	poolCfg.MaxConnIdleTime = config.DBIdleTimeout
+	poolCfg.MaxConnLifetime = config.DBMaxConnLifetime
+	poolCfg.HealthCheckPeriod = config.DBHealthCheckPeriod
 	poolCfg.ConnConfig.ConnectTimeout = config.DBConnectTimeout
+
+	// Cap any single statement server-side so a hung or runaway query cannot hold
+	// a pooled connection forever and starve the pool (cascading-failure guard).
+	if poolCfg.ConnConfig.RuntimeParams == nil {
+		poolCfg.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	poolCfg.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(
+		config.DBStatementTimeout.Milliseconds(), 10,
+	)
 
 	// Register the profile_role enum (and its array) on every new connection so
 	// pgx can decode profile_role[] into []sqlc.ProfileRole.

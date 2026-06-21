@@ -5,7 +5,6 @@ package graph
 import (
 	"context"
 	"net/http"
-	"time"
 
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/handler/extension"
@@ -16,12 +15,14 @@ import (
 	"github.com/vektah/gqlparser/v2/ast"
 
 	"github.com/uxname/liteend-go/internal/auth"
+	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/graph/generated"
 	"github.com/uxname/liteend-go/internal/graph/resolver"
 )
 
 // NewHandler builds the GraphQL HTTP handler (queries, mutations, subscriptions).
-func NewHandler(r *resolver.Resolver, mw *auth.Middleware) http.Handler {
+// isProd disables introspection and masks internal error messages in production.
+func NewHandler(r *resolver.Resolver, mw *auth.Middleware, isProd bool) http.Handler {
 	srv := handler.New(generated.NewExecutableSchema(generated.Config{Resolvers: r}))
 
 	srv.AddTransport(transport.Options{})
@@ -33,7 +34,7 @@ func NewHandler(r *resolver.Resolver, mw *auth.Middleware) http.Handler {
 	// "graphql-transport-ws" (graphql-ws lib) and legacy subprotocols, so the
 	// SPA's graphql-ws client connects without changes.
 	srv.AddTransport(&transport.Websocket{
-		KeepAlivePingInterval: 10 * time.Second,
+		KeepAlivePingInterval: config.WSKeepAlivePingInterval,
 		Upgrader: websocket.Upgrader{
 			CheckOrigin: func(_ *http.Request) bool { return true },
 		},
@@ -47,12 +48,19 @@ func NewHandler(r *resolver.Resolver, mw *auth.Middleware) http.Handler {
 		},
 	})
 
-	srv.SetQueryCache(lru.New[*ast.QueryDocument](1000))
-	srv.Use(extension.Introspection{})
-	srv.Use(extension.AutomaticPersistedQuery{Cache: lru.New[string](100)})
+	srv.SetQueryCache(lru.New[*ast.QueryDocument](config.GraphQLQueryCacheSize))
+	// Introspection is a useful dev affordance but leaks the full schema; disable
+	// it in production.
+	if !isProd {
+		srv.Use(extension.Introspection{})
+	}
+	srv.Use(extension.AutomaticPersistedQuery{Cache: lru.New[string](config.GraphQLAPQCacheSize)})
+	// Bound the cost of a single operation so deeply nested/expensive queries
+	// cannot exhaust server resources.
+	srv.Use(extension.FixedComplexityLimit(config.GraphQLComplexityLimit))
 	srv.Use(&LoggingExtension{})
 
-	srv.SetErrorPresenter(errorPresenter)
+	srv.SetErrorPresenter(newErrorPresenter(isProd))
 
 	return srv
 }

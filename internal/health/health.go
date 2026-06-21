@@ -8,9 +8,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"runtime"
-	"time"
 
 	"github.com/uxname/liteend-go/internal/config"
+	"github.com/uxname/liteend-go/internal/logger"
 )
 
 // Status values reported per check and overall.
@@ -48,9 +48,11 @@ type response struct {
 // Handler returns an http.Handler serving the health report.
 func (c *Checker) Handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), config.HealthCheckTimeout)
 		defer cancel()
 
+		// A few quick checks, bounded by the context timeout above. Sequential is
+		// fine here — there's no benefit in adding goroutines for three fast probes.
 		checks := map[string]checkResult{
 			"database": ping(ctx, c.db),
 			"redis":    ping(ctx, c.redis),
@@ -83,7 +85,11 @@ func ping(ctx context.Context, p Pinger) checkResult {
 		return checkResult{Status: statusError, Error: "not configured"}
 	}
 	if err := p.Ping(ctx); err != nil {
-		return checkResult{Status: statusError, Error: err.Error()}
+		// Log the real cause server-side; expose only a generic status to the
+		// unauthenticated /health endpoint so raw driver/connection details
+		// (which can include credentials) never leak.
+		logger.From(ctx).Warn("health dependency unavailable", "error", err)
+		return checkResult{Status: statusError, Error: "unavailable"}
 	}
 	return checkResult{Status: statusOK}
 }

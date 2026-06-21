@@ -14,9 +14,27 @@ const (
 
 	// HeapThresholdMB is the heap usage health threshold in megabytes.
 	HeapThresholdMB = 150
+	// HealthCheckTimeout bounds the whole /health probe (all dependency pings).
+	HealthCheckTimeout = 5 * time.Second
 
 	// FallbackRequestID is used when no request id is present.
 	FallbackRequestID = "unknown"
+
+	// GraphQL handler tuning.
+	// GraphQLComplexityLimit caps the cost of a single operation, bounding
+	// resource use from deeply nested or expensive queries.
+	GraphQLComplexityLimit = 200
+	// GraphQLQueryCacheSize is the LRU size for parsed query documents.
+	GraphQLQueryCacheSize = 1000
+	// GraphQLAPQCacheSize is the LRU size for automatic persisted queries.
+	GraphQLAPQCacheSize = 100
+	// WSKeepAlivePingInterval is the WebSocket transport keep-alive ping interval.
+	WSKeepAlivePingInterval = 10 * time.Second
+
+	// Profile field limits (enforced before persistence).
+	ProfileDisplayNameMaxLen = 100
+	ProfileBioMaxLen         = 1000
+	ProfileAvatarURLMaxLen   = 2048
 
 	// HTTP server timeouts. ReadHeaderTimeout caps slow header sends; ReadTimeout
 	// and WriteTimeout bound the full request/response (Slow Loris protection);
@@ -44,6 +62,15 @@ const (
 	DBRetryMaxDelay  = 5 * time.Second
 	DBRetryBaseDelay = 1 * time.Second
 	DBMaxRetries     = 5
+	// DBStatementTimeout caps any single SQL statement at the server, so a hung
+	// or runaway query cannot hold a pooled connection indefinitely and exhaust
+	// the pool (cascading failure protection).
+	DBStatementTimeout = 30 * time.Second
+	// DBMaxConnLifetime recycles connections periodically so the pool recovers
+	// from stale server-side state and rebalances across replicas.
+	DBMaxConnLifetime = time.Hour
+	// DBHealthCheckPeriod is how often the pool probes idle connections.
+	DBHealthCheckPeriod = time.Minute
 
 	// FileUploadTimeout bounds a single upload request.
 	FileUploadTimeout = 30 * time.Second

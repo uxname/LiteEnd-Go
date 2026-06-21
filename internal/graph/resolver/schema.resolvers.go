@@ -25,6 +25,9 @@ func (r *mutationResolver) UpdateProfile(ctx context.Context, input model.Profil
 	if err != nil {
 		return nil, err
 	}
+	if err := validateProfileUpdate(input); err != nil {
+		return nil, err
+	}
 	updated, err := r.Profiles.Update(ctx, user.ID, user.OidcSub, profile.UpdateParams{
 		AvatarURL:   input.AvatarURL,
 		DisplayName: input.DisplayName,

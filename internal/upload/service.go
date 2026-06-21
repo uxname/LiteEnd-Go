@@ -231,16 +231,20 @@ func writeFile(ctx context.Context, path string, body io.Reader) (int64, error) 
 	if err != nil {
 		return 0, fmt.Errorf("create file: %w", err)
 	}
-	defer func() { _ = f.Close() }()
 
 	done := make(chan struct{})
 	var written int64
 	var copyErr error
 	go func() {
-		// close(done) runs last; the recover above it turns a panic in io.Copy
-		// (e.g. from a misbehaving body reader) into an error instead of crashing
-		// the process, and still unblocks the select below.
+		// close(done) runs last; the recover turns a panic in io.Copy (e.g. from a
+		// misbehaving body reader) into an error instead of crashing the process,
+		// and still unblocks the select below.
 		defer close(done)
+		// Close the file from the goroutine that owns the write. If writeFile
+		// returns early on <-ctx.Done(), this detached goroutine keeps running, so
+		// closing here (not via a defer in writeFile) prevents io.Copy from writing
+		// into a descriptor the caller already closed.
+		defer func() { _ = f.Close() }()
 		defer func() {
 			if r := recover(); r != nil {
 				copyErr = fmt.Errorf("upload copy panicked: %v", r)

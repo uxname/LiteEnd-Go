@@ -98,7 +98,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 		I18n:     translator,
 		Log:      log,
 	}
-	gqlHandler := graph.NewHandler(res, authMW)
+	gqlHandler := graph.NewHandler(res, authMW, cfg.IsProduction())
 	uploadH := upload.NewHandler(upload.New(database.Queries))
 
 	mountRoutes(srv.Router(), routeDeps{

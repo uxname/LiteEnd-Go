@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"time"
 
 	"github.com/jackc/pgx/v5/stdlib"
@@ -36,12 +37,15 @@ func Migrate(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		if lastErr == nil {
 			break
 		}
+		// Full jitter: sleep a random duration in [0, delay] so concurrent
+		// instances/replicas don't reconnect in lock-step (thundering herd).
+		wait := time.Duration(rand.Int64N(int64(delay)) + 1) //nolint:gosec // jitter for retry backoff, not security-sensitive
 		log.Warn("waiting for database before migrating",
-			"attempt", attempt, "max", config.DBMaxRetries, "retry_in", delay.String())
+			"attempt", attempt, "max", config.DBMaxRetries, "retry_in", wait.String())
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("waiting for database: %w", ctx.Err())
-		case <-time.After(delay):
+		case <-time.After(wait):
 		}
 		if delay *= 2; delay > config.DBRetryMaxDelay {
 			delay = config.DBRetryMaxDelay
