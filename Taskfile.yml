@@ -21,16 +21,9 @@ tasks:
       - go tool github.com/bokwoon95/wgo version >/dev/null 2>&1 || true
       - lefthook install || echo "lefthook not installed; run 'go install github.com/evilmartians/lefthook@latest'"
       - task: gen
-      - task: codegraph
       - docker compose up -d db redis
       - task: db:migrate
       - echo "Setup done. Start the app with hot-reload via 'task start:dev'."
-
-  codegraph:
-    desc: Build/refresh the local CodeGraph index for AI structural navigation (skipped if CLI absent)
-    cmds:
-      - cmd: sh -c 'if command -v codegraph >/dev/null 2>&1; then if [ -d .codegraph ]; then codegraph index; else codegraph init -i; fi; else echo "codegraph CLI not installed — skipping index (AI structural navigation)"; fi'
-        silent: true
 
   start:dev:
     desc: Run the server locally with hot-reload (wgo) against the compose DB+Redis

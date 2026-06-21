@@ -91,15 +91,11 @@ This is the Go port of the LiteEnd backend. Read this before changing code.
 
 ## Code navigation (CodeGraph)
 
-This project supports **CodeGraph** — a tree-sitter knowledge graph of every
-symbol and edge, queryable by AI agents via the `codegraph_*` MCP tools (who
-calls what, where a symbol is defined, impact analysis). Prefer it over grep for
-structural questions.
-
-- The index is built automatically by `task setup` (or rebuild it any time with
-  `task codegraph`). Both are no-ops if the `codegraph` CLI isn't installed.
-- The index (`/.codegraph/`) is **machine-local and git-ignored** — it's rebuilt
-  per clone, never committed.
+Code-intelligence indexing (the `codegraph_*` MCP tools — who calls what, where a
+symbol is defined, impact analysis) lives **only in the LiteStack meta-repo**,
+which owns a single index spanning both submodules. This sub-project carries no
+CodeGraph config of its own; run queries from the meta-repo root. See the
+meta-repo README for setup.
 
 ## Quality & linters
 
