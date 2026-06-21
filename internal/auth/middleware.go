@@ -140,20 +140,29 @@ func isProviderUnavailable(err error) bool {
 	return errors.As(err, &urlErr)
 }
 
-// StripBearer extracts the token from an "Authorization: Bearer ..." value.
-func StripBearer(authHeader string) string {
+// parseBearer splits an "Authorization: Bearer ..." value into its token.
+// ok is false when the value carries no (case-insensitive) "Bearer " prefix.
+func parseBearer(authHeader string) (token string, ok bool) {
 	const prefix = "Bearer "
 	if len(authHeader) > len(prefix) && strings.EqualFold(authHeader[:len(prefix)], prefix) {
-		return authHeader[len(prefix):]
+		return authHeader[len(prefix):], true
+	}
+	return "", false
+}
+
+// StripBearer extracts the token from an "Authorization: Bearer ..." value,
+// returning the input unchanged when it has no Bearer prefix (the WebSocket
+// init payload may already carry the raw token).
+func StripBearer(authHeader string) string {
+	if token, ok := parseBearer(authHeader); ok {
+		return token
 	}
 	return authHeader
 }
 
+// bearerToken returns the request's bearer token, or "" when the Authorization
+// header is missing or lacks the Bearer prefix.
 func bearerToken(r *http.Request) string {
-	h := r.Header.Get("Authorization")
-	const prefix = "Bearer "
-	if len(h) > len(prefix) && strings.EqualFold(h[:len(prefix)], prefix) {
-		return h[len(prefix):]
-	}
-	return ""
+	token, _ := parseBearer(r.Header.Get("Authorization"))
+	return token
 }
