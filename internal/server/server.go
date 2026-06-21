@@ -34,7 +34,7 @@ func New(cfg *config.Config, log *slog.Logger, rdb *redis.Client) *Server {
 	r.Use(chimw.RequestID)
 	r.Use(appmw.ContextLogger(log)) // request-scoped logger (request_id) for logger.From(ctx)
 	r.Use(appmw.Recoverer(log))
-	r.Use(chimw.RealIP) // honours X-Forwarded-For / X-Real-IP (trustProxy)
+	r.Use(appmw.RealIP) // honours X-Forwarded-For (trustProxy)
 	r.Use(appmw.RequestLogger(log))
 	r.Use(appmw.SecureHeaders(cfg.IsProduction()))
 	r.Use(chimw.Compress(5))

@@ -11,6 +11,43 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestRealIP_XForwardedFor(t *testing.T) {
+	t.Parallel()
+	var got string
+	h := RealIP(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got = r.RemoteAddr }))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.1:1234"
+	req.Header.Set("X-Forwarded-For", "1.2.3.4, 5.6.7.8")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	require.Equal(t, "1.2.3.4", got)
+}
+
+func TestRealIP_XRealIP(t *testing.T) {
+	t.Parallel()
+	var got string
+	h := RealIP(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got = r.RemoteAddr }))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Real-IP", "9.9.9.9")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	require.Equal(t, "9.9.9.9", got)
+}
+
+func TestRealIP_NoHeadersKeepsRemoteAddr(t *testing.T) {
+	t.Parallel()
+	var got string
+	h := RealIP(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got = r.RemoteAddr }))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.1:1234"
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	require.Equal(t, "10.0.0.1:1234", got)
+}
+
 func TestRecoverer_PanicReturns500(t *testing.T) {
 	t.Parallel()
 	log := slog.New(slog.DiscardHandler)
