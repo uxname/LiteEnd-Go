@@ -204,7 +204,8 @@ Run `task --list` to see them all. The ones you'll use most:
 | `task gen` | Regenerate code (after editing SQL or the GraphQL schema) |
 | `task check` | Full project gate — codegen, format, tidy, build, lint, vuln, secrets (runs on `pre-commit`) |
 | `task test` | Run fast unit tests |
-| `task test:all` | Run every test — unit + integration (needs Docker; runs on `pre-push`) |
+| `task test:all` | Run every test — unit + integration (needs Docker) |
+| `task test:cov` | Every test plus the coverage floors — this is what runs on `pre-push` |
 | `task test:integration` | Run only the full tests against real Postgres + Redis (needs Docker) |
 | `task lint` | Check code style and quality |
 | `task fmt` | Auto-format the code |
@@ -212,7 +213,6 @@ Run `task --list` to see them all. The ones you'll use most:
 | `task db:migrate` | Apply database migrations |
 | `task migration:create name=add_x` | Create a new migration file |
 | `task db:reset` | Wipe and recreate the dev database |
-| `task codegraph` | Build/refresh the CodeGraph index (no-op if the CLI isn't installed) |
 
 ## How you log in (dev vs real)
 
@@ -230,7 +230,8 @@ All settings come from environment variables (see `.env.example`). The important
 | Variable | Meaning |
 |---|---|
 | `PORT` | which port the app listens on (default 4000) |
-| `CORS_ORIGIN` | comma-separated list of allowed frontend origins |
+| `NODE_ENV` | **set it to exactly `production` in production.** That one value refuses `OIDC_MOCK_ENABLED`, requires a non-empty `CORS_ORIGIN`, and turns off GraphQL introspection and internal error messages. Default `development`; anything else (including `staging`) counts as non-production |
+| `CORS_ORIGIN` | comma-separated list of allowed frontend origins — gates **both** HTTP CORS and the GraphQL WebSocket handshake |
 | `DATABASE_*` | Postgres connection |
 | `REDIS_*` | Redis connection |
 | `OIDC_*` | login / token checking |
@@ -282,9 +283,10 @@ follow the call into the package you care about.
 This project supports **CodeGraph** — a
 searchable map of every symbol and call in the codebase. AI assistants use it to
 answer "who calls this?" / "where is X defined?" far more accurately than text
-search. `task setup` builds the index automatically (and skips silently if the
-CLI isn't installed); rebuild it any time with `task codegraph`. The index lives
-in `.codegraph/` and is git-ignored — it's local to your machine.
+search. The index is owned by the **LiteStack meta-repo**, which keeps a single
+graph spanning this project and the frontend — this repo has no CodeGraph config
+and no task for it. Build and query it from the meta-repo root; `.codegraph/`
+lives there and is git-ignored.
 
 ### Debugging & reading logs
 

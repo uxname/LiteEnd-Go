@@ -1,8 +1,8 @@
-# Test-coverage thresholds, enforced by `task cover` (full unit + integration
+# Test-coverage thresholds, enforced by `task test:cov` (full unit + integration
 # run, needs Docker). go-test-coverage reads the profile below and fails if
 # coverage drops under the thresholds.
 #
-# `threshold.total` is calibrated from a real `task cover` run (unit +
+# `threshold.total` is calibrated from a real `task test:cov` run (unit +
 # integration with -coverpkg, ~39.9% at calibration) and set a few points below
 # with headroom. Ratchet it UP over time — never lower it to dodge a finding;
 # add the missing test instead.
@@ -10,7 +10,7 @@
 # Per-package `override` floors below are the backend's TDD teeth: new
 # business logic in a domain package without tests drops that package under its
 # floor and fails the gate — it cannot hide in the aggregate total. Add tests in
-# the same change and ratchet the floor up. (See backend/AGENTS.md → TDD discipline.)
+# the same change and ratchet the floor up. (See .agents/TESTING.md.)
 profile: coverage.out
 
 # Generated code and thin entrypoints carry no testable logic of our own.

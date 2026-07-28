@@ -41,13 +41,13 @@ Key log lines (the `msg` field):
 task start:dev 2>&1 | grep '"request_id":"<ID>"'
 
 # app in Docker:
-docker compose logs -f backend | grep '"request_id":"<ID>"'
+docker compose logs -f app | grep '"request_id":"<ID>"'
 
 # pretty-print + filter with jq:
-docker compose logs --no-log-prefix backend | jq -c 'select(.request_id=="<ID>")'
+docker compose logs --no-log-prefix app | jq -c 'select(.request_id=="<ID>")'
 
 # only errors:
-docker compose logs --no-log-prefix backend | jq -c 'select(.level=="ERROR")'
+docker compose logs --no-log-prefix app | jq -c 'select(.level=="ERROR")'
 ```
 
 ## Symptom → cause → fix
