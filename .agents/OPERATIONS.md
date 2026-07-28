@@ -62,3 +62,9 @@ Two variables deserve special care:
   trimmed, and an empty list means "allow any origin" — acceptable in dev, refused in
   production, and *not* refused on other non-production environments, so set it
   explicitly on staging.
+
+  **Never write `CORS_ORIGIN=*`.** The two consumers disagree about it: go-chi/cors
+  treats `*` as allow-all, while the WebSocket patterns are matched against
+  `scheme://host` with `path.Match`, and `*` does not match the `/` in it. The result
+  is every HTTP origin allowed and every browser WebSocket handshake refused with 403.
+  List origins explicitly instead.
