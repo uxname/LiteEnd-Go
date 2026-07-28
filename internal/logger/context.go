@@ -23,5 +23,7 @@ func From(ctx context.Context) *slog.Logger {
 	if l, ok := ctx.Value(ctxKey{}).(*slog.Logger); ok && l != nil {
 		return l
 	}
-	return slog.Default() //nolint:sloglint // documented fallback when ctx carries no logger
+	// Documented fallback when ctx carries no logger. sloglint's no-global rule
+	// only covers the logging calls themselves, so no suppression is needed here.
+	return slog.Default()
 }

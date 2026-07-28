@@ -38,6 +38,7 @@ linters:
     - dupword
     - exhaustive
     - forbidigo
+    - depguard
     - gochecknoglobals
     - gochecknoinits
     - gocritic
@@ -59,6 +60,7 @@ linters:
     - funlen
     - gocognit
     - nestif
+    - nolintlint
 
   settings:
     wrapcheck:

@@ -30,7 +30,17 @@ func New(cfg *config.BackupConfig, log *slog.Logger) *Tool {
 	return &Tool{cfg: cfg, log: log}
 }
 
+// custom reports whether dumps are written in pg_dump's binary custom format,
+// which only pg_restore can read.
+func (t *Tool) custom() bool { return t.cfg.BackupFormat == "custom" }
+
 func (t *Tool) ext() string {
+	// The custom format is already compressed by pg_dump itself, so it never gets
+	// an external gzip pass — and it must not claim a .sql name, because Restore
+	// picks its tool from the extension.
+	if t.custom() {
+		return "dump"
+	}
 	if t.cfg.BackupCompressionEnabled {
 		return "sql.gz"
 	}
@@ -73,7 +83,7 @@ func (t *Tool) Backup(ctx context.Context) error {
 	file := filepath.Join(t.cfg.BackupDir, fmt.Sprintf("%s_%s.%s", t.cfg.DatabaseName, ts, t.ext()))
 
 	format := "p"
-	if t.cfg.BackupFormat == "custom" {
+	if t.custom() {
 		format = "c"
 	}
 
@@ -106,7 +116,9 @@ func (t *Tool) runDump(ctx context.Context, args []string, outFile string) error
 	dump.Env = append(os.Environ(), "PGPASSWORD="+t.cfg.DatabasePassword)
 	dump.Stderr = os.Stderr
 
-	if t.cfg.BackupCompressionEnabled {
+	// The custom format carries its own compression; piping it through gzip would
+	// only cost CPU and hide the format from Restore.
+	if t.cfg.BackupCompressionEnabled && !t.custom() {
 		gzip := exec.CommandContext(ctx, "gzip")
 		gzip.Stdout = out
 		gzip.Stderr = os.Stderr
@@ -177,14 +189,33 @@ func (t *Tool) Restore(ctx context.Context, fileName string) error {
 		return fmt.Errorf("backup file not found: %w", err)
 	}
 
-	psqlArgs := []string{
+	connArgs := []string{
 		"-h", t.cfg.DatabaseHost,
 		"-p", strconv.Itoa(t.cfg.DatabasePort),
 		"-U", t.cfg.DatabaseUser,
 		"-d", t.cfg.DatabaseName,
 	}
+	// Without ON_ERROR_STOP psql reports success after skipping every failed
+	// statement, so a half-restored database looks like a completed restore.
+	psqlArgs := append(append([]string{}, connArgs...), "-v", "ON_ERROR_STOP=1")
 
 	t.log.Info("restoring backup", "file", path)
+
+	// A binary custom-format dump is not SQL text: only pg_restore reads it.
+	// --exit-on-error makes it fail loudly like psql above (its default is to
+	// continue and exit 0 with warnings).
+	if strings.HasSuffix(fileName, ".dump") {
+		args := append(append([]string{}, connArgs...), "--exit-on-error", path)
+		restore := exec.CommandContext(ctx, "pg_restore", args...) //nolint:gosec // args from config, path under the backup dir
+		restore.Env = append(os.Environ(), "PGPASSWORD="+t.cfg.DatabasePassword)
+		restore.Stderr = os.Stderr
+		if err := restore.Run(); err != nil {
+			return fmt.Errorf("pg_restore: %w", err)
+		}
+		t.log.Info("restore completed", "file", path)
+		return nil
+	}
+
 	if strings.HasSuffix(fileName, ".gz") {
 		gunzip := exec.CommandContext(ctx, "gunzip", "-c", path) //nolint:gosec // path is under the configured backup dir
 		psql := exec.CommandContext(ctx, "psql", psqlArgs...)    //nolint:gosec // args from config

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 
 	goredis "github.com/redis/go-redis/v9"
 
@@ -51,6 +52,19 @@ func (ps *PubSub) SubscribeForUser(ctx context.Context, userID int32) <-chan sql
 func (ps *PubSub) pump(ctx context.Context, sub *goredis.PubSub, out chan<- sqlc.Profile, userID int32) {
 	defer close(out)
 	defer func() { _ = sub.Close() }()
+	// This runs on its own goroutine, so an unrecovered panic here takes the whole
+	// process down for every user — not just this subscriber. The other background
+	// goroutines (HTTP, jobs, upload copy) all recover; this one has to as well.
+	defer func() {
+		if rec := recover(); rec != nil {
+			ps.log.LogAttrs(
+				ctx, slog.LevelError, "profile_pubsub_panic",
+				slog.Any("panic", rec),
+				slog.Int("user_id", int(userID)),
+				slog.String("stack", string(debug.Stack())),
+			)
+		}
+	}()
 	ch := sub.Channel()
 	for {
 		select {

@@ -1,14 +1,18 @@
 package middleware
 
 import (
+	"math"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-redis/redis_rate/v10"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/uxname/liteend-go/internal/config"
+	"github.com/uxname/liteend-go/internal/httperr"
+	"github.com/uxname/liteend-go/internal/logger"
 )
 
 // RateLimit returns a Redis-backed (GCRA) rate-limiting middleware.
@@ -28,13 +32,21 @@ func RateLimit(rdb *redis.Client) func(http.Handler) http.Handler {
 			key := rateKey(r)
 			res, err := limiter.Allow(r.Context(), key, limit)
 			if err != nil {
-				// Fail-open on limiter errors (Redis down) — availability over throttling.
+				// Fail-open on limiter errors (Redis down) — availability over
+				// throttling. Say so in the log: silently dropping the error made
+				// "rate limiting is off" indistinguishable from "nobody hit a limit".
+				// One line per request while Redis is down is the intended volume —
+				// an unprotected surface should be noisy.
+				logger.From(r.Context()).Warn("rate limiter unavailable, allowing request", "error", err)
 				next.ServeHTTP(w, r)
 				return
 			}
 			if res.Allowed <= 0 {
-				w.Header().Set("Retry-After", res.RetryAfter.String())
-				http.Error(w, `{"error":"Too Many Requests"}`, http.StatusTooManyRequests)
+				// RFC 9110: Retry-After is delay-seconds, not a Go duration string
+				// ("1m39s" is unparseable, so clients retry immediately).
+				retryAfter := int(math.Ceil(res.RetryAfter.Seconds()))
+				w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+				httperr.Write(w, http.StatusTooManyRequests, "Too Many Requests")
 				return
 			}
 			next.ServeHTTP(w, r)

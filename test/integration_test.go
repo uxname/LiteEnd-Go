@@ -69,6 +69,10 @@ func TestMain(m *testing.M) {
 		"OIDC_AUDIENCE":     "test",
 		"OIDC_JWKS_URI":     "http://localhost/oidc/jwks",
 		"OIDC_MOCK_ENABLED": "true",
+		// Explicit allowlist, as in production: it drives both CORS and the
+		// WebSocket handshake authorization. Left empty, every origin is allowed
+		// and the origin checks below would prove nothing.
+		"CORS_ORIGIN": "http://localhost:3000",
 	})
 
 	cfg, err := config.Load()
@@ -258,4 +262,44 @@ func must(err error) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+// TestWebsocket_OriginAuthorization pins the handshake allowlist introduced when
+// gqlgen dropped the gorilla adapter: the transport now authorizes cross-origin
+// WebSocket upgrades against CORS_ORIGIN instead of accepting any origin.
+func TestWebsocket_OriginAuthorization(t *testing.T) {
+	wsURL := "ws" + server.URL[len("http"):] + "/graphql"
+
+	dial := func(origin string) (*websocket.Conn, *http.Response, error) {
+		header := http.Header{"Sec-WebSocket-Protocol": {"graphql-transport-ws"}}
+		if origin != "" {
+			header.Set("Origin", origin)
+		}
+		return websocket.DefaultDialer.Dial(wsURL, header)
+	}
+
+	t.Run("allowed origin completes the handshake", func(t *testing.T) {
+		conn, _, err := dial("http://localhost:3000")
+		require.NoError(t, err, "the SPA origin is in CORS_ORIGIN and must connect")
+		require.NoError(t, conn.Close())
+	})
+
+	t.Run("foreign origin is refused", func(t *testing.T) {
+		conn, resp, err := dial("http://evil.example")
+		if conn != nil {
+			_ = conn.Close()
+		}
+		require.Error(t, err, "an origin outside CORS_ORIGIN must not get a socket")
+		require.NotNil(t, resp)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusForbidden, resp.StatusCode)
+	})
+
+	// A non-browser client (no Origin header at all) is not subject to the check —
+	// this is what the existing subscription test relies on.
+	t.Run("absent origin still connects", func(t *testing.T) {
+		conn, _, err := dial("")
+		require.NoError(t, err)
+		require.NoError(t, conn.Close())
+	})
 }

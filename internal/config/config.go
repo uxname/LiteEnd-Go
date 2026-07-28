@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/caarlos0/env/v11"
@@ -64,6 +65,18 @@ func (c *Config) RedisAddr() string {
 	return fmt.Sprintf("%s:%d", c.RedisHost, c.RedisPort)
 }
 
+// trimmedNonEmpty trims each entry of a comma-separated env list and drops the
+// empties (a trailing comma or a blank value).
+func trimmedNonEmpty(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // Load reads .env (if present) and parses environment variables into Config.
 // A missing .env file is not an error — variables may come from the real
 // environment (e.g. inside a container).
@@ -78,6 +91,12 @@ func Load() (*Config, error) {
 	if cfg.OIDCMockEnabled && cfg.IsProduction() {
 		return nil, errors.New("OIDC_MOCK_ENABLED must not be true in production")
 	}
+
+	// `env` splits on "," without trimming, so the natural
+	// `CORS_ORIGIN=http://a, http://b` yields " http://b" — an origin that matches
+	// nothing. This list is now also the WebSocket handshake allowlist, so a stray
+	// space silently kills subscriptions from that origin, not just CORS.
+	cfg.CORSOrigin = trimmedNonEmpty(cfg.CORSOrigin)
 
 	// An empty CORS_ORIGIN makes go-chi/cors allow every origin; combined with
 	// AllowCredentials that is unsafe in production, so require an explicit
@@ -113,6 +132,15 @@ func LoadBackup() (*BackupConfig, error) {
 	cfg := &BackupConfig{}
 	if err := env.Parse(cfg); err != nil {
 		return nil, fmt.Errorf("parse backup config: %w", err)
+	}
+	// BACKUP_ROTATION below 1 is silently destructive: rotate() keeps the newest N
+	// files, so 0 deletes the dump it just created and a negative value slices out
+	// of range. Refuse at startup instead of losing backups at runtime.
+	if cfg.BackupRotation < 1 {
+		return nil, fmt.Errorf("BACKUP_ROTATION must be at least 1, got %d", cfg.BackupRotation)
+	}
+	if cfg.BackupFormat != "plain" && cfg.BackupFormat != "custom" {
+		return nil, fmt.Errorf(`BACKUP_FORMAT must be "plain" or "custom", got %q`, cfg.BackupFormat)
 	}
 	return cfg, nil
 }
