@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/vektah/gqlparser/v2/gqlerror"
 
 	"github.com/uxname/liteend-go/internal/auth"
+	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/db/sqlc"
 	"github.com/uxname/liteend-go/internal/graph/model"
 	"github.com/uxname/liteend-go/internal/graph/resolver"
@@ -303,4 +306,118 @@ func TestProfileUpdated_BridgesEvents(t *testing.T) {
 		t.Fatal("timed out waiting for the bridged profileUpdated event")
 	}
 	close(ch)
+}
+
+// --- UpdateProfile input validation ---
+//
+// The columns are unbounded TEXT and avatarUrl is a bare String scalar, so these
+// limits are the only thing standing between user input and the database.
+
+// rejectingProfiles fails the test if the resolver reaches the service layer —
+// validation must short-circuit before any write.
+func rejectingProfiles(t *testing.T) fakeProfiles {
+	t.Helper()
+	return fakeProfiles{
+		updateFn: func(context.Context, int32, string, profile.UpdateParams) (sqlc.Profile, error) {
+			t.Fatal("service must not be called when input validation fails")
+			return sqlc.Profile{}, nil
+		},
+	}
+}
+
+func requireBadUserInput(t *testing.T, err error) {
+	t.Helper()
+	require.Error(t, err)
+	var gqlErr *gqlerror.Error
+	require.ErrorAs(t, err, &gqlErr)
+	require.Equal(t, "BAD_USER_INPUT", gqlErr.Extensions["code"])
+	require.Equal(t, 400, gqlErr.Extensions["statusCode"])
+}
+
+func TestUpdateProfile_RejectsOverlongDisplayName(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("a", config.ProfileDisplayNameMaxLen+1)
+	r := &resolver.Resolver{Profiles: rejectingProfiles(t), PubSub: &fakePubSub{}, Log: discardLog()}
+	_, err := r.Mutation().UpdateProfile(userCtx(), model.ProfileUpdateInput{DisplayName: &long})
+	requireBadUserInput(t, err)
+}
+
+func TestUpdateProfile_CountsRunesNotBytesInDisplayName(t *testing.T) {
+	t.Parallel()
+	// 100 multi-byte runes are 300 bytes but exactly at the limit — a byte-based
+	// check would wrongly reject this.
+	atLimit := strings.Repeat("я", config.ProfileDisplayNameMaxLen)
+	profiles := fakeProfiles{
+		updateFn: func(_ context.Context, id int32, sub string, in profile.UpdateParams) (sqlc.Profile, error) {
+			return sqlc.Profile{ID: id, OidcSub: sub, DisplayName: in.DisplayName}, nil
+		},
+	}
+	r := &resolver.Resolver{Profiles: profiles, PubSub: &fakePubSub{}, Log: discardLog()}
+	_, err := r.Mutation().UpdateProfile(userCtx(), model.ProfileUpdateInput{DisplayName: &atLimit})
+	require.NoError(t, err)
+}
+
+func TestUpdateProfile_RejectsOverlongBio(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("b", config.ProfileBioMaxLen+1)
+	r := &resolver.Resolver{Profiles: rejectingProfiles(t), PubSub: &fakePubSub{}, Log: discardLog()}
+	_, err := r.Mutation().UpdateProfile(userCtx(), model.ProfileUpdateInput{Bio: &long})
+	requireBadUserInput(t, err)
+}
+
+func TestUpdateProfile_RejectsOverlongAvatarURL(t *testing.T) {
+	t.Parallel()
+	long := "https://example.com/" + strings.Repeat("c", config.ProfileAvatarURLMaxLen)
+	r := &resolver.Resolver{Profiles: rejectingProfiles(t), PubSub: &fakePubSub{}, Log: discardLog()}
+	_, err := r.Mutation().UpdateProfile(userCtx(), model.ProfileUpdateInput{AvatarURL: &long})
+	requireBadUserInput(t, err)
+}
+
+func TestUpdateProfile_RejectsNonHTTPAvatarURL(t *testing.T) {
+	t.Parallel()
+	for _, bad := range []string{
+		"/relative/avatar.png",       // not absolute
+		"ftp://example.com/a.png",    // wrong scheme
+		"javascript:alert(1)",        // opaque, no host
+		"data:image/png;base64,AAAA", // data URI
+	} {
+		t.Run(bad, func(t *testing.T) {
+			t.Parallel()
+			url := bad
+			r := &resolver.Resolver{Profiles: rejectingProfiles(t), PubSub: &fakePubSub{}, Log: discardLog()}
+			_, err := r.Mutation().UpdateProfile(userCtx(), model.ProfileUpdateInput{AvatarURL: &url})
+			requireBadUserInput(t, err)
+		})
+	}
+}
+
+func TestUpdateProfile_AcceptsEmptyAvatarURLAsClearing(t *testing.T) {
+	t.Parallel()
+	empty := ""
+	called := false
+	profiles := fakeProfiles{
+		updateFn: func(_ context.Context, id int32, sub string, _ profile.UpdateParams) (sqlc.Profile, error) {
+			called = true
+			return sqlc.Profile{ID: id, OidcSub: sub}, nil
+		},
+	}
+	r := &resolver.Resolver{Profiles: profiles, PubSub: &fakePubSub{}, Log: discardLog()}
+	_, err := r.Mutation().UpdateProfile(userCtx(), model.ProfileUpdateInput{AvatarURL: &empty})
+	require.NoError(t, err)
+	require.True(t, called, "an empty avatarUrl clears the avatar and must reach the service")
+}
+
+func TestUpdateProfile_AcceptsValidHTTPSAvatarURL(t *testing.T) {
+	t.Parallel()
+	good := "https://cdn.example.com/avatars/alice.png"
+	profiles := fakeProfiles{
+		updateFn: func(_ context.Context, id int32, sub string, in profile.UpdateParams) (sqlc.Profile, error) {
+			require.NotNil(t, in.AvatarURL)
+			require.Equal(t, good, *in.AvatarURL)
+			return sqlc.Profile{ID: id, OidcSub: sub}, nil
+		},
+	}
+	r := &resolver.Resolver{Profiles: profiles, PubSub: &fakePubSub{}, Log: discardLog()}
+	_, err := r.Mutation().UpdateProfile(userCtx(), model.ProfileUpdateInput{AvatarURL: &good})
+	require.NoError(t, err)
 }

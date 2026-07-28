@@ -11,7 +11,7 @@ import (
 	"github.com/99designs/gqlgen/graphql/handler/lru"
 	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/99designs/gqlgen/graphql/playground"
-	"github.com/gorilla/websocket"
+	coderws "github.com/coder/websocket"
 	"github.com/vektah/gqlparser/v2/ast"
 
 	"github.com/uxname/liteend-go/internal/auth"
@@ -22,7 +22,14 @@ import (
 
 // NewHandler builds the GraphQL HTTP handler (queries, mutations, subscriptions).
 // isProd disables introspection and masks internal error messages in production.
-func NewHandler(r *resolver.Resolver, mw *auth.Middleware, isProd bool) http.Handler {
+// allowedOrigins is the HTTP CORS allowlist, reused to authorize cross-origin
+// WebSocket handshakes; empty means dev (any origin), as in config.Load.
+func NewHandler(
+	r *resolver.Resolver,
+	mw *auth.Middleware,
+	isProd bool,
+	allowedOrigins []string,
+) http.Handler {
 	srv := handler.New(generated.NewExecutableSchema(generated.Config{Resolvers: r}))
 
 	srv.AddTransport(transport.Options{})
@@ -30,14 +37,23 @@ func NewHandler(r *resolver.Resolver, mw *auth.Middleware, isProd bool) http.Han
 	srv.AddTransport(transport.POST{})
 	srv.AddTransport(transport.MultipartForm{})
 
+	// coder/websocket (gqlgen's default adapter since it dropped gorilla) only
+	// authorizes same-origin handshakes, but the SPA lives on another origin — so
+	// mirror the HTTP CORS allowlist. Patterns carrying a scheme are matched
+	// against "scheme://host", which is exactly the CORS_ORIGIN format.
+	accept := coderws.AcceptOptions{OriginPatterns: allowedOrigins}
+	if len(allowedOrigins) == 0 {
+		// Same rule as go-chi/cors on an empty list: dev-only, allow every origin.
+		// config.Load refuses an empty CORS_ORIGIN in production.
+		accept.InsecureSkipVerify = true
+	}
+
 	// WebSocket transport. gqlgen negotiates both the modern
 	// "graphql-transport-ws" (graphql-ws lib) and legacy subprotocols, so the
 	// SPA's graphql-ws client connects without changes.
 	srv.AddTransport(&transport.Websocket{
 		KeepAlivePingInterval: config.WSKeepAlivePingInterval,
-		Upgrader: websocket.Upgrader{
-			CheckOrigin: func(_ *http.Request) bool { return true },
-		},
+		Implementation:        transport.CoderWebsocketImplementation{AcceptOptions: accept},
 		InitFunc: func(ctx context.Context, initPayload transport.InitPayload) (context.Context, *transport.InitPayload, error) {
 			bearer := auth.StripBearer(initPayload.Authorization())
 			mockSub := initPayload.GetString("x-mock-sub")

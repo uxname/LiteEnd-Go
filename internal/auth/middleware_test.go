@@ -2,7 +2,13 @@ package auth
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -59,4 +65,70 @@ func TestAuthenticateCreds_NoMockNoBearerIsNil(t *testing.T) {
 	t.Parallel()
 	m := NewMiddleware(nil, fakeProfiles{}, slog.New(slog.DiscardHandler), false)
 	require.Nil(t, m.AuthenticateCreds(context.Background(), "", ""))
+}
+
+// failingMockProfiles makes the mock-identity lookup fail, which must degrade to
+// an anonymous request rather than a panic or a fabricated user.
+type failingMockProfiles struct{ fakeProfiles }
+
+func (failingMockProfiles) FindOrCreateMockUser(context.Context) (sqlc.Profile, error) {
+	return sqlc.Profile{}, errors.New("db down")
+}
+
+func TestAuthenticateCreds_MockUserLookupFailureIsAnonymous(t *testing.T) {
+	t.Parallel()
+	m := newMockMiddleware(failingMockProfiles{})
+	require.Nil(t, m.AuthenticateCreds(context.Background(), "", ""))
+}
+
+// --- RequireAuth (REST guard, e.g. POST /upload) ---
+
+func TestRequireAuth_RejectsAnonymousWith401(t *testing.T) {
+	t.Parallel()
+	m := NewMiddleware(nil, fakeProfiles{}, slog.New(slog.DiscardHandler), false)
+	h := m.RequireAuth(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("the guarded handler must not run for an anonymous request")
+	}))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/upload", nil))
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestRequireAuth_PassesAuthenticatedUserDownstream(t *testing.T) {
+	t.Parallel()
+	m := newMockMiddleware(fakeProfiles{mockUser: sqlc.Profile{ID: 42, OidcSub: "mock-oidc-sub"}})
+	var seen *sqlc.Profile
+	h := m.RequireAuth(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		seen, _ = UserFromContext(r.Context())
+	}))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/upload", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, seen, "the guarded handler must see the user in its context")
+	require.Equal(t, int32(42), seen.ID)
+}
+
+// --- isProviderUnavailable: decides 503 (retry) vs 401 (re-authenticate) ---
+
+func TestIsProviderUnavailable(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"deadline exceeded", context.DeadlineExceeded, true},
+		{"canceled", context.Canceled, true},
+		{"wrapped net error", fmt.Errorf("jwks: %w", &net.DNSError{IsTimeout: true}), true},
+		{"wrapped url error", fmt.Errorf("fetch: %w", &url.Error{Op: "Get", Err: errors.New("boom")}), true},
+		{"invalid token", errors.New("token signature is invalid"), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, c.want, isProviderUnavailable(c.err))
+		})
+	}
 }

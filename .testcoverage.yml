@@ -34,7 +34,7 @@ threshold:
 # unlike `exclude.paths` above which match the full import path.
 override:
   - path: ^internal/graph/resolver$
-    threshold: 90
+    threshold: 94
   - path: ^internal/queue$
     threshold: 75
   - path: ^internal/upload$
