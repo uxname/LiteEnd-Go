@@ -16,7 +16,7 @@ lives. Read the file that matches your task — don't read them all.
 | Understand layering / where a new package belongs | [.agents/ARCHITECTURE.md](./.agents/ARCHITECTURE.md) |
 | Write tests, hit a coverage floor, pick unit vs integration | [.agents/TESTING.md](./.agents/TESTING.md) |
 | A gate is failing, or you're about to claim "done" | [.agents/QUALITY-GATES.md](./.agents/QUALITY-GATES.md) |
-| Env vars, admin dashboards, volumes, backups | [.agents/OPERATIONS.md](./.agents/OPERATIONS.md) |
+| Env vars, admin dashboards, volumes, deploy | [.agents/OPERATIONS.md](./.agents/OPERATIONS.md) |
 | Read logs, triage a failure | [docs/DEBUGGING.md](./docs/DEBUGGING.md) |
 | How this side pairs with the frontend | meta-repo `AGENTS.md` |
 
@@ -49,7 +49,5 @@ lives. Read the file that matches your task — don't read them all.
   `logger.From(ctx)` in request scope.
 - Don't let domain/infra packages import the transport layer (depguard blocks it).
 - Don't widen a layer's `mayDependOn` to make an import compile.
-- Don't weaken a backup safety flag (`ON_ERROR_STOP`, `--exit-on-error`) — a silent
-  half-restore is worse than a loud failure.
 - Don't add heavyweight frameworks; this template values a small, idiomatic stack.
 - Don't commit secrets — `gitleaks` runs in `task check` (when installed).

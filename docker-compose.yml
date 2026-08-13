@@ -28,6 +28,9 @@ x-small-resources: &small-resources
 
 services:
   app:
+    # `up` reuses whatever image last claimed this tag — run `up --build` (or
+    # `task docker:build` first) after code changes.
+    image: "${IMAGE_REGISTRY:-}liteend:${IMAGE_TAG:-latest}"
     build:
       context: .
       dockerfile: Dockerfile
@@ -53,7 +56,8 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "/app/server", "-healthcheck"]
-      interval: 5s
+      # /health is not free (it probes DB/Redis/memory); 5s polling is needless load.
+      interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
@@ -102,33 +106,6 @@ services:
       timeout: 5s
       retries: 5
 
-  db_backup:
-    build:
-      context: .
-      dockerfile: Dockerfile.dbbackup
-    <<: *common-restart-policy
-    deploy:
-      <<: *small-resources
-    environment:
-      DATABASE_HOST: db
-      DATABASE_PORT: ${DATABASE_PORT}
-      DATABASE_USER: ${DATABASE_USER}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
-      DATABASE_NAME: ${DATABASE_NAME}
-      BACKUP_DIR: /app/data/database_backups
-      BACKUP_INTERVAL: 4h
-      BACKUP_ROTATION: 20
-      BACKUP_FORMAT: plain
-      BACKUP_COMPRESS: "true"
-    volumes:
-      - backups:/app/data/database_backups
-    networks:
-      - liteend-net
-    logging: *common-logging
-    depends_on:
-      db:
-        condition: service_healthy
-
   # ---- Admin dashboards (internal only; exposed via the auth proxy below) ----
 
   # pgweb: DB browser (Prisma Studio analog).
@@ -169,6 +146,8 @@ services:
   asynqmon:
     image: hibiken/asynqmon:latest
     <<: *common-restart-policy
+    # Static Go binary that writes nothing — safe under any numeric non-root uid.
+    user: "65532:65532"
     deploy:
       <<: *small-resources
     command:
@@ -178,18 +157,25 @@ services:
       - liteend-net
     logging: *common-logging
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
 
   # Auth proxy: enforces HTTP Basic Auth in front of every admin dashboard, so
   # none of them is reachable anonymously. Backends publish no host ports.
   admin_proxy:
     image: caddy:2-alpine
     <<: *common-restart-policy
+    # The caddy image runs as root by default; this is a plain HTTP basic-auth
+    # proxy (no TLS cert storage), so run non-root and point Caddy's state dirs
+    # at a writable /tmp path.
+    user: "65532:65532"
     deploy:
       <<: *small-resources
     environment:
       ADMIN_USER: ${ADMIN_USER}
       ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH}
+      XDG_CONFIG_HOME: /tmp/caddy/config
+      XDG_DATA_HOME: /tmp/caddy/data
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
     ports:
@@ -212,4 +198,3 @@ volumes:
   postgres: # Postgres data (internal; inspect via pgweb, not raw files)
   redis: # Redis data (internal; inspect via RedisInsight)
   uploads: # User-uploaded files (served at /uploads; app uid 65532)
-  backups: # pg_dump archives written by db_backup (uid 70)

@@ -23,7 +23,7 @@ Enforced by two gates, both inside `task check`:
   infrastructure`, plus cross-cutting commons (`config`, `logger`, `version`,
   `httperr`).
 - **depguard** (`.golangci.yml`) forbids domain/infra packages (`profile`, `upload`,
-  `queue`, `auth`, `redis`, `db`, `i18n`, `health`, `backup`, `middleware`, `logger`,
+  `queue`, `auth`, `redis`, `db`, `i18n`, `health`, `middleware`, `logger`,
   `config`) from importing the transport layer (`internal/graph`, `internal/server`,
   `internal/app`).
 

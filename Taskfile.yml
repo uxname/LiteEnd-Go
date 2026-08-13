@@ -89,11 +89,30 @@ tasks:
     desc: Build all binaries into ./bin
     cmds:
       - go build -ldflags "{{.LDFLAGS}}" -o {{.BIN}}/server ./cmd/server
-      - go build -o {{.BIN}}/dbbackup ./cmd/dbbackup
-      - go build -o {{.BIN}}/dbrestore ./cmd/dbrestore
     vars:
       LDFLAGS:
         sh: 'echo "-X {{.PKG}}/internal/version.Commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown) -X {{.PKG}}/internal/version.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"'
+
+  docker:build:
+    desc: "Build the production image as <IMAGE_REGISTRY>liteend:<IMAGE_TAG> (defaults: no registry, latest)"
+    vars:
+      IMAGE:
+        sh: 'echo "${IMAGE_REGISTRY:-}liteend:${IMAGE_TAG:-latest}"'
+    cmds:
+      - docker build --build-arg COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown) --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) -t {{.IMAGE}} .
+
+  docker:push:
+    desc: Push the production image (requires IMAGE_REGISTRY)
+    vars:
+      IMAGE:
+        sh: 'echo "${IMAGE_REGISTRY:-}liteend:${IMAGE_TAG:-latest}"'
+    cmds:
+      - cmd: |
+          if [ -z "${IMAGE_REGISTRY:-}" ]; then
+            echo "set IMAGE_REGISTRY (e.g. ghcr.io/acme/) before pushing" >&2
+            exit 1
+          fi
+          docker push {{.IMAGE}}
 
   lint:
     desc: Run golangci-lint

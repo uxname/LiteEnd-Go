@@ -35,7 +35,6 @@ components:
       - internal/redis
       - internal/i18n
       - internal/health
-      - internal/backup
   # cross-cutting helpers — importable by any layer
   config:  { in: internal/config }
   logger:  { in: internal/logger }

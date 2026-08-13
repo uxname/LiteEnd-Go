@@ -26,6 +26,6 @@ COPY --from=build /out/server /app/server
 COPY --from=build --chown=65532:65532 /data/uploads /app/data/uploads
 EXPOSE 4000
 # Migrations run programmatically at startup (embedded), so no goose CLI needed.
-HEALTHCHECK --interval=5s --timeout=10s --retries=3 --start-period=10s \
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=10s \
     CMD ["/app/server", "-healthcheck"]
 ENTRYPOINT ["/app/server"]

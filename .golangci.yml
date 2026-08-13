@@ -108,7 +108,6 @@ linters:
             - "**/internal/db/**"
             - "**/internal/i18n/**"
             - "**/internal/health/**"
-            - "**/internal/backup/**"
             - "**/internal/middleware/**"
             - "**/internal/logger/**"
             - "**/internal/config/**"

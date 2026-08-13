@@ -58,33 +58,3 @@ func TestLoad_TrimsCORSOriginList(t *testing.T) {
 		cfg.CORSOrigin,
 	)
 }
-
-func TestLoadBackup_RejectsDestructiveRotation(t *testing.T) {
-	t.Setenv("DATABASE_PASSWORD", "p")
-	// rotate() keeps the newest N files, so 0 deletes the dump it just created and
-	// a negative value slices out of range and panics the backup daemon.
-	for _, rotation := range []string{"0", "-1"} {
-		t.Setenv("BACKUP_ROTATION", rotation)
-		_, err := LoadBackup()
-		require.Error(t, err, "BACKUP_ROTATION=%s must be rejected at startup", rotation)
-	}
-}
-
-func TestLoadBackup_RejectsUnknownFormat(t *testing.T) {
-	t.Setenv("DATABASE_PASSWORD", "p")
-	t.Setenv("BACKUP_FORMAT", "tar")
-	_, err := LoadBackup()
-	require.Error(t, err, "only plain and custom are implemented by Restore")
-}
-
-func TestLoadBackup_AcceptsValidSettings(t *testing.T) {
-	t.Setenv("DATABASE_PASSWORD", "p")
-	// Set both explicitly rather than asserting the defaults: Load reads the
-	// developer's .env, so a default-value assertion would depend on the machine.
-	t.Setenv("BACKUP_ROTATION", "3")
-	t.Setenv("BACKUP_FORMAT", "custom")
-	cfg, err := LoadBackup()
-	require.NoError(t, err)
-	require.Equal(t, 3, cfg.BackupRotation)
-	require.Equal(t, "custom", cfg.BackupFormat)
-}

@@ -23,7 +23,8 @@ import (
 // NewHandler builds the GraphQL HTTP handler (queries, mutations, subscriptions).
 // isProd disables introspection and masks internal error messages in production.
 // allowedOrigins is the HTTP CORS allowlist, reused to authorize cross-origin
-// WebSocket handshakes; empty means dev (any origin), as in config.Load.
+// WebSocket handshakes; empty means no cross-origin handshake is allowed, in
+// every environment.
 func NewHandler(
 	r *resolver.Resolver,
 	mw *auth.Middleware,
@@ -41,12 +42,11 @@ func NewHandler(
 	// authorizes same-origin handshakes, but the SPA lives on another origin — so
 	// mirror the HTTP CORS allowlist. Patterns carrying a scheme are matched
 	// against "scheme://host", which is exactly the CORS_ORIGIN format.
+	// An empty list is never allow-all — the fail-fast on an empty CORS_ORIGIN
+	// only fires for NODE_ENV=production, so a staging deployment used to accept
+	// every origin. coder/websocket still lets same-origin and Origin-less
+	// (non-browser) clients through, so only cross-origin browsers are refused.
 	accept := coderws.AcceptOptions{OriginPatterns: allowedOrigins}
-	if len(allowedOrigins) == 0 {
-		// Same rule as go-chi/cors on an empty list: dev-only, allow every origin.
-		// config.Load refuses an empty CORS_ORIGIN in production.
-		accept.InsecureSkipVerify = true
-	}
 
 	// WebSocket transport. gqlgen negotiates both the modern
 	// "graphql-transport-ws" (graphql-ws lib) and legacy subprotocols, so the

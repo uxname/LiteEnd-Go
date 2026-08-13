@@ -1,0 +1,51 @@
+# Production compose — the APP ONLY. Postgres and Redis are NOT here: the
+# production .env points DATABASE_HOST/REDIS_HOST at external services (Dokploy
+# native services, managed databases, or another compose project). Local dev
+# uses docker-compose.yml instead. Full deploy guide: the meta repo's
+# docs/DEPLOY.md.
+#
+# Deliberately no build: block — this file is a deploy artifact. The image must
+# already exist: pulled from a registry, or built first with `task docker:build`
+# (same tag). With a build: fallback, a failed pull would silently ship a local
+# rebuild under the pushed artifact's tag.
+
+services:
+  app:
+    image: "${IMAGE_REGISTRY:-}liteend:${IMAGE_TAG:-latest}"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 512M
+    env_file:
+      - .env
+    # Published on loopback only — a host reverse proxy terminates TLS.
+    ports:
+      - "127.0.0.1:${PORT}:${PORT}"
+    # Dokploy/Traefik variant: drop the "ports:" block above and join the
+    # external proxy network instead (declare it at the bottom too):
+    # networks:
+    #   - dokploy-network
+    volumes:
+      - uploads:/app/data/uploads
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "/app/server", "-healthcheck"]
+      # /health is not free (it probes DB/Redis/memory); 5s polling is needless load.
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  uploads: # User-uploaded files (served at /uploads; app uid 65532)
+
+# Dokploy/Traefik variant (see the app service's networks comment):
+# networks:
+#   dokploy-network:
+#     external: true

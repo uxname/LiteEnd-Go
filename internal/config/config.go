@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/caarlos0/env/v11"
 	"github.com/joho/godotenv"
@@ -105,42 +104,5 @@ func Load() (*Config, error) {
 		return nil, errors.New("CORS_ORIGIN must be set to an explicit origin allowlist in production")
 	}
 
-	return cfg, nil
-}
-
-// BackupConfig is the minimal configuration for the dbbackup/dbrestore tools.
-// It deliberately does NOT require OIDC settings (the backup container has none).
-type BackupConfig struct {
-	LogLevel string `env:"LOG_LEVEL" envDefault:"info"`
-
-	DatabaseHost     string `env:"DATABASE_HOST" envDefault:"localhost"`
-	DatabasePort     int    `env:"DATABASE_PORT" envDefault:"5432"`
-	DatabaseUser     string `env:"DATABASE_USER" envDefault:"postgres"`
-	DatabasePassword string `env:"DATABASE_PASSWORD,required"`
-	DatabaseName     string `env:"DATABASE_NAME" envDefault:"postgres"`
-
-	BackupDir                string        `env:"BACKUP_DIR" envDefault:"./data/database_backups"`
-	BackupInterval           time.Duration `env:"BACKUP_INTERVAL" envDefault:"24h"`
-	BackupRotation           int           `env:"BACKUP_ROTATION" envDefault:"5"`
-	BackupFormat             string        `env:"BACKUP_FORMAT" envDefault:"plain"`
-	BackupCompressionEnabled bool          `env:"BACKUP_COMPRESS" envDefault:"true"`
-}
-
-// LoadBackup loads configuration for the backup tools (no OIDC required).
-func LoadBackup() (*BackupConfig, error) {
-	_ = godotenv.Load()
-	cfg := &BackupConfig{}
-	if err := env.Parse(cfg); err != nil {
-		return nil, fmt.Errorf("parse backup config: %w", err)
-	}
-	// BACKUP_ROTATION below 1 is silently destructive: rotate() keeps the newest N
-	// files, so 0 deletes the dump it just created and a negative value slices out
-	// of range. Refuse at startup instead of losing backups at runtime.
-	if cfg.BackupRotation < 1 {
-		return nil, fmt.Errorf("BACKUP_ROTATION must be at least 1, got %d", cfg.BackupRotation)
-	}
-	if cfg.BackupFormat != "plain" && cfg.BackupFormat != "custom" {
-		return nil, fmt.Errorf(`BACKUP_FORMAT must be "plain" or "custom", got %q`, cfg.BackupFormat)
-	}
 	return cfg, nil
 }

@@ -10,8 +10,8 @@ for the 5-minute orientation before anything else.
 ## TL;DR
 
 - **What you get:** a GraphQL + REST backend with login (OIDC/JWT), user
-  profiles, file uploads, background jobs, translations (en/ru), health checks,
-  and database backups.
+  profiles, file uploads, background jobs, translations (en/ru), and health
+  checks.
 - **Main tools:** Go 1.26 · [chi](https://github.com/go-chi/chi) (router) ·
   [gqlgen](https://gqlgen.com) (GraphQL) · [pgx](https://github.com/jackc/pgx) +
   [sqlc](https://sqlc.dev) (Postgres) · [goose](https://github.com/pressly/goose)
@@ -51,7 +51,7 @@ Then open <http://localhost:4000/playground> (login: `admin` / `admin`).
 
 **What problem does this solve?** It's a starter kit, not a finished app. It
 already wires up the boring-but-essential parts of a backend (database, login,
-logging, jobs, file uploads, backups) so you can spend your time on *your*
+logging, jobs, file uploads) so you can spend your time on *your*
 features instead of plumbing.
 
 **What should I already know?** Basic Go, what an HTTP API is, and how to use a
@@ -94,7 +94,6 @@ Read [AGENTS.md](AGENTS.md) once you want the deeper "why" behind the rules.
 | Jobs | an asynq "test" queue with retries and de-duplication (dashboard: Asynqmon) |
 | Translations | en/ru, chosen by the `Accept-Language` header, English as fallback |
 | Logs | structured JSON logs that hide secrets and include a request id |
-| Backups | scheduled `pg_dump` with rotation, plus a restore command |
 
 ## Before you start
 
@@ -142,10 +141,9 @@ file and the server restarts on its own.
 > before using this anywhere real. The public endpoints (`/graphql`, `/upload`,
 > `/uploads/*`, `/health`) stay open.
 
-> **Where data lives.** Files you can browse — `./data/uploads` and
-> `./data/database_backups` — are stored on your machine. Postgres and Redis keep
-> their own data in Docker volumes (don't put those in `./data` — they're
-> root-owned and would break `go test ./...`).
+> **Where data lives.** Files you can browse — `./data/uploads` — are stored on
+> your machine. Postgres and Redis keep their own data in Docker volumes (don't
+> put those in `./data` — they're root-owned and would break `go test ./...`).
 
 ## Your first change (a walkthrough)
 
@@ -237,7 +235,6 @@ All settings come from environment variables (see `.env.example`). The important
 | `OIDC_*` | login / token checking |
 | `OIDC_MOCK_ENABLED` | dev-only login bypass (refused in production) |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | login for the dashboards and dev pages |
-| `BACKUP_*` | backup folder, interval, how many to keep, format |
 
 ## The API
 
@@ -251,7 +248,7 @@ All settings come from environment variables (see `.env.example`). The important
 ### The layout
 
 ```
-cmd/         entry points: server, dbbackup, dbrestore
+cmd/         entry points: server
 internal/
   app/        wires everything together (used by main and by tests)
   config/     reads settings from the environment
@@ -266,7 +263,6 @@ internal/
   graph/      GraphQL handler, resolvers, error formatting, logging
   i18n/       translations (en/ru)
   health/     the /health check
-  backup/     pg_dump / restore logic
   devtools/   the /dev page, Swagger UI, OpenAPI spec
 db/
   migrations/ database migrations (goose)

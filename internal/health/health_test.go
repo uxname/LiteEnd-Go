@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"runtime/metrics"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -28,6 +29,19 @@ func TestHandler_AllUp(t *testing.T) {
 	require.Equal(t, statusOK, resp.Status)
 	require.Equal(t, statusOK, resp.Checks["database"].Status)
 	require.Equal(t, statusOK, resp.Checks["redis"].Status)
+	require.Equal(t, statusOK, resp.Checks["memory"].Status)
+	// The exact substring cmd/server -healthcheck greps for.
+	require.Contains(t, rec.Body.String(), `"status":"ok"`)
+}
+
+// TestMemoryCheck pins the metric name: an unsupported one would silently
+// degrade memoryCheck into a constant "ok".
+func TestMemoryCheck(t *testing.T) {
+	t.Parallel()
+	sample := []metrics.Sample{{Name: heapMetric}}
+	metrics.Read(sample)
+	require.Equal(t, metrics.KindUint64, sample[0].Value.Kind(), "%s unsupported by this Go version", heapMetric)
+	require.Equal(t, statusOK, memoryCheck().Status)
 }
 
 func TestHandler_DBDownReturns503(t *testing.T) {

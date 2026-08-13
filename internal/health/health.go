@@ -7,7 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"runtime"
+	"runtime/metrics"
 
 	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/logger"
@@ -18,6 +18,10 @@ const (
 	statusOK    = "ok"
 	statusError = "error"
 )
+
+// heapMetric is the runtime/metrics counterpart of runtime.MemStats.HeapAlloc:
+// bytes held by live objects plus dead ones not yet swept.
+const heapMetric = "/memory/classes/heap/objects:bytes"
 
 // Pinger is anything that can report its liveness.
 type Pinger interface {
@@ -95,9 +99,18 @@ func ping(ctx context.Context, p Pinger) checkResult {
 }
 
 func memoryCheck() checkResult {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-	heapMB := m.HeapAlloc / (1024 * 1024)
+	// runtime/metrics reads counters the runtime already maintains; unlike
+	// runtime.ReadMemStats it never stops the world, which matters on a public
+	// endpoint the container healthcheck polls every few seconds.
+	sample := []metrics.Sample{{Name: heapMetric}}
+	metrics.Read(sample)
+	if sample[0].Value.Kind() != metrics.KindUint64 {
+		// A Go upgrade dropped the metric: not a reason to fail the probe (and
+		// reading the value of an unsupported metric panics). TestMemoryCheck
+		// fails loudly instead.
+		return checkResult{Status: statusOK}
+	}
+	heapMB := sample[0].Value.Uint64() / (1024 * 1024)
 	if heapMB > config.HeapThresholdMB {
 		return checkResult{Status: statusError, Error: "heap usage above threshold"}
 	}
