@@ -1,8 +1,9 @@
 # Production compose — the APP ONLY. Postgres and Redis are NOT here: the
-# production .env points DATABASE_HOST/REDIS_HOST at external services (Dokploy
-# native services, managed databases, or another compose project). Local dev
-# uses docker-compose.yml instead. Full deploy guide: the meta repo's
-# docs/DEPLOY.md.
+# production config points DATABASE_HOST/REDIS_HOST at external services
+# (Dokploy native services, managed databases, or another compose project),
+# given either by a .env next to this file OR by plain exported environment
+# variables. Local dev uses docker-compose.yml instead. Full deploy guide: the
+# meta repo's docs/DEPLOY.md.
 #
 # Deliberately no build: block — this file is a deploy artifact. The image must
 # already exist: pulled from a registry, or built first with `task docker:build`
@@ -18,11 +19,41 @@ services:
         limits:
           cpus: "1.5"
           memory: 512M
+    # Config reaches the container two ways — pick per host:
+    #   1. a .env NEXT TO THIS FILE (single-machine flow): loaded when present;
+    #   2. plain exported environment variables (no-.env hosts): the explicit
+    #      mappings below pick them up via interpolation.
+    # Interpolation reads shell vars first, then the project-dir .env, so both
+    # sources feed the same ${VAR}. Required-in-production vars use ":?" so a
+    # half-configured host fails LOUDLY at compose time instead of booting an
+    # app that cannot authenticate anything. Vars not listed here ride in only
+    # via .env (optional tuning — see .env.example).
     env_file:
-      - .env
+      - path: .env
+        required: false
+    environment:
+      # Prod artifact: production posture unless overridden upstream.
+      NODE_ENV: ${NODE_ENV:-production}
+      # Empty CORS_ORIGIN allows every origin OUTSIDE production (the silent
+      # wrong-environment trap) — refuse to render without an explicit list.
+      CORS_ORIGIN: ${CORS_ORIGIN:?set CORS_ORIGIN (comma-separated origins)}
+      DATABASE_HOST: ${DATABASE_HOST:-localhost}
+      DATABASE_PORT: ${DATABASE_PORT:-5432}
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:?set DATABASE_PASSWORD}
+      DATABASE_NAME: ${DATABASE_NAME:-postgres}
+      REDIS_HOST: ${REDIS_HOST:-localhost}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      OIDC_ISSUER: ${OIDC_ISSUER:?set OIDC_ISSUER}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:?set OIDC_AUDIENCE}
+      OIDC_JWKS_URI: ${OIDC_JWKS_URI:?set OIDC_JWKS_URI}
+      # The container ALWAYS listens on 4000 (mirrors the frontend prod
+      # compose); PORT only selects the HOST side of the mapping below.
+      PORT: 4000
     # Published on loopback only — a host reverse proxy terminates TLS.
     ports:
-      - "127.0.0.1:${PORT}:${PORT}"
+      - "127.0.0.1:${PORT:-4000}:4000"
     # Dokploy/Traefik variant: drop the "ports:" block above and join the
     # external proxy network instead (declare it at the bottom too):
     # networks:
