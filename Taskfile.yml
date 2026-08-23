@@ -82,17 +82,24 @@ tasks:
       - task: secrets
 
   compose:check:
-    desc: Validate the prod compose file renders (schema, interpolation, :? guards)
+    desc: Validate compose files render (schema, interpolation, :? guards)
     cmds:
       # Dummy values satisfy the prod file's required-var guards, so this is
       # hermetic (no .env needed). A YAML typo, bad interpolation or a NEW :?
       # guard without a matching dummy fails here — before any deploy.
-      # Skipped when docker is absent, mirroring the secrets-task convention.
+      # The dev compose needs .env BY DESIGN (env_file, DB credentials), so it
+      # is validated only where .env exists — i.e. on every real dev machine.
+      # Skipped entirely when docker is absent, mirroring the secrets task.
       - cmd: |
-          if command -v docker >/dev/null 2>&1; then
-            env CORS_ORIGIN=dummy DATABASE_PASSWORD=dummy OIDC_ISSUER=dummy OIDC_AUDIENCE=dummy OIDC_JWKS_URI=dummy docker compose -f docker-compose.prod.yml config -q
-          else
+          if ! command -v docker >/dev/null 2>&1; then
             echo "docker not installed — skipping compose check"
+            exit 0
+          fi
+          env CORS_ORIGIN=dummy DATABASE_PASSWORD=dummy OIDC_ISSUER=dummy OIDC_AUDIENCE=dummy OIDC_JWKS_URI=dummy docker compose -f docker-compose.prod.yml config -q
+          if [ -f .env ]; then
+            docker compose -f docker-compose.yml config -q
+          else
+            echo "no .env — skipping dev-compose validation (requires .env by design)"
           fi
 
   secrets:
