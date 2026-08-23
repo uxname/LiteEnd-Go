@@ -87,7 +87,13 @@ tasks:
       # Dummy values satisfy the prod file's required-var guards, so this is
       # hermetic (no .env needed). A YAML typo, bad interpolation or a NEW :?
       # guard without a matching dummy fails here — before any deploy.
-      - env CORS_ORIGIN=dummy DATABASE_PASSWORD=dummy OIDC_ISSUER=dummy OIDC_AUDIENCE=dummy OIDC_JWKS_URI=dummy docker compose -f docker-compose.prod.yml config -q
+      # Skipped when docker is absent, mirroring the secrets-task convention.
+      - cmd: |
+          if command -v docker >/dev/null 2>&1; then
+            env CORS_ORIGIN=dummy DATABASE_PASSWORD=dummy OIDC_ISSUER=dummy OIDC_AUDIENCE=dummy OIDC_JWKS_URI=dummy docker compose -f docker-compose.prod.yml config -q
+          else
+            echo "docker not installed — skipping compose check"
+          fi
 
   secrets:
     desc: Scan the tree for committed secrets (gitleaks; skipped if not installed)
