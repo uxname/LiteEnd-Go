@@ -65,13 +65,8 @@ services:
       options:
         max-size: "50m"
         max-file: "5"
-    healthcheck:
-      test: ["CMD", "/app/server", "-healthcheck"]
-      # /health is not free (it probes DB/Redis/memory); 5s polling is needless load.
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
+    # No healthcheck here on purpose: the app's HEALTHCHECK lives in the
+    # Dockerfile — one source of truth, honored by any orchestrator.
 
 volumes:
   uploads: # User-uploaded files (served at /uploads; app uid 65532)

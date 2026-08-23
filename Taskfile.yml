@@ -74,11 +74,20 @@ tasks:
       - task: tidy:check
       - task: fmt:check
       - go build ./...
+      - task: compose:check
       - task: lint
       - task: arch
       - task: deadcode
       - task: vuln
       - task: secrets
+
+  compose:check:
+    desc: Validate the prod compose file renders (schema, interpolation, :? guards)
+    cmds:
+      # Dummy values satisfy the prod file's required-var guards, so this is
+      # hermetic (no .env needed). A YAML typo, bad interpolation or a NEW :?
+      # guard without a matching dummy fails here — before any deploy.
+      - env CORS_ORIGIN=dummy DATABASE_PASSWORD=dummy OIDC_ISSUER=dummy OIDC_AUDIENCE=dummy OIDC_JWKS_URI=dummy docker compose -f docker-compose.prod.yml config -q
 
   secrets:
     desc: Scan the tree for committed secrets (gitleaks; skipped if not installed)
