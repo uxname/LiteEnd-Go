@@ -204,7 +204,7 @@ func (s *Service) SafeFileInfo(relativePath string) (fullPath, mimeType string, 
 	if resolved != root && !strings.HasPrefix(resolved, root+string(os.PathSeparator)) {
 		return "", "", ErrForbidden
 	}
-	if _, statErr := os.Stat(resolved); statErr != nil {
+	if _, statErr := os.Stat(resolved); statErr != nil { //nolint:gosec // G703: the check above proves resolved is inside root
 		return "", "", ErrNotFound
 	}
 	return resolved, mimeOf(resolved), nil

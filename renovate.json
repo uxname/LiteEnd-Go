@@ -9,6 +9,16 @@
   "labels": ["dependencies"],
   "prConcurrentLimit": 5,
   "prHourlyLimit": 2,
+  "customManagers": [
+    {
+      "description": "Tool versions pinned as Taskfile vars are invisible to the gomod manager, so they rot until a toolchain bump breaks the gate (go-arch-lint v1.15.0 stopped working under Go 1.27).",
+      "customType": "regex",
+      "managerFilePatterns": ["/^Taskfile\\.yml$/"],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)\\s*\\n\\s*\\w+:\\s*(?<currentValue>\\S+)"
+      ]
+    }
+  ],
   "packageRules": [
     {
       "description": "Flag major updates for manual review — they may carry breaking changes the CI gate is meant to catch.",

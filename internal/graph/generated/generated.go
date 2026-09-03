@@ -3136,10 +3136,6 @@ func (ec *executionContext) marshalNJSON2map(ctx context.Context, sel ast.Select
 	return res
 }
 
-func (ec *executionContext) marshalNProfile2githubᚗcomᚋuxnameᚋliteendᚑgoᚋinternalᚋgraphᚋmodelᚐProfile(ctx context.Context, sel ast.SelectionSet, v model.Profile) graphql.Marshaler {
-	return ec._Profile(ctx, sel, &v)
-}
-
 func (ec *executionContext) marshalNProfile2ᚖgithubᚗcomᚋuxnameᚋliteendᚑgoᚋinternalᚋgraphᚋmodelᚐProfile(ctx context.Context, sel ast.SelectionSet, v *model.Profile) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {

@@ -3,9 +3,12 @@ version: "3"
 vars:
   BIN: bin
   PKG: github.com/uxname/liteend-go
-  GO_ARCH_LINT_VERSION: v1.15.0
-  X_TOOLS_VERSION: v0.46.0
-  GO_TEST_COVERAGE_VERSION: v2.18.8
+  # renovate: datasource=go depName=github.com/fe3dback/go-arch-lint
+  GO_ARCH_LINT_VERSION: v1.18.0
+  # renovate: datasource=go depName=golang.org/x/tools
+  X_TOOLS_VERSION: v0.49.0
+  # renovate: datasource=go depName=github.com/vladopajic/go-test-coverage/v2
+  GO_TEST_COVERAGE_VERSION: v2.19.0
 
 tasks:
   default:
