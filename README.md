@@ -103,8 +103,6 @@ You need:
 - **Docker** (for `docker compose` and for the integration tests)
 - **Task** (optional but handy) — the command shortcuts below. On Arch it's the
   `go-task` package.
-- **CodeGraph** (optional) — a code-navigation index for AI assistants; see
-  [Finding your way around the code](#finding-your-way-around-the-code).
 
 ## Get it running
 
@@ -122,7 +120,7 @@ them.
 ### Option B — app on your machine, database in Docker (best for coding)
 
 ```bash
-task setup         # copies .env, installs git hooks, generates code, builds the CodeGraph index, starts DB+Redis, runs migrations
+task setup         # copies .env, installs git hooks, generates code, starts DB+Redis, runs migrations
 task start:dev     # runs the app with auto-reload — restarts on every .go change
 ```
 
@@ -196,7 +194,7 @@ Run `task --list` to see them all. The ones you'll use most:
 
 | Command | What it does |
 |---|---|
-| `task setup` | First-time setup (env, hooks, codegen, CodeGraph index, DB, migrations) |
+| `task setup` | First-time setup (env, hooks, codegen, DB, migrations) |
 | `task start:dev` | Run the app with auto-reload (wgo, hot-reload) |
 | `task start:prod` | Run the app without hot-reload |
 | `task gen` | Regenerate code (after editing SQL or the GraphQL schema) |
@@ -273,16 +271,6 @@ docker-compose.yml
 
 Good rule of thumb: start at `internal/app/app.go` (it wires everything) and
 follow the call into the package you care about.
-
-### CodeGraph (for AI assistants)
-
-This project supports **CodeGraph** — a
-searchable map of every symbol and call in the codebase. AI assistants use it to
-answer "who calls this?" / "where is X defined?" far more accurately than text
-search. The index is owned by the **LiteStack meta-repo**, which keeps a single
-graph spanning this project and the frontend — this repo has no CodeGraph config
-and no task for it. Build and query it from the meta-repo root; `.codegraph/`
-lives there and is git-ignored.
 
 ### Debugging & reading logs
 

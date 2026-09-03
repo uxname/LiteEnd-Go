@@ -35,8 +35,8 @@ wrong-direction import compile.**
 > `transport → infrastructure` and `domain → infrastructure`, and `sqlc.Profile`
 > serves as the domain model, leaking into `resolver.ProfileService`. So a resolver
 > *can* run SQL past the domain and the gate stays green. Tightening the rule
-> requires introducing a real domain model plus mapping first — recorded as a P2 item
-> in the meta-repo's latest `docs/audits/*/audit-report.md`.
+> requires introducing a real domain model plus mapping first — a known and
+> deliberate trade-off, not an oversight.
 
 ## Auth
 
@@ -85,10 +85,3 @@ To read logs and triage failures: [../docs/DEBUGGING.md](../docs/DEBUGGING.md).
 - **A migration** → `task migration:create name=…` (goose format under
   `db/migrations/`). Forward-only and embedded: they run programmatically at
   startup, so don't rely on a goose CLI in production.
-
-## Code navigation (CodeGraph)
-
-Code-intelligence indexing (`codegraph_*` MCP tools — who calls what, where a symbol
-is defined, impact analysis) lives **only in the LiteStack meta-repo**, which owns a
-single index spanning both submodules. This sub-project carries no CodeGraph config
-and no `task` for it; run queries from the meta-repo root.
