@@ -73,7 +73,11 @@ Three rules keep the log usable when something breaks:
 2. **Every failure path leaves exactly one line, with the original message.** If
    an error is masked for the client (production internal errors), the unmasked
    text goes to the log first — see `newErrorPresenter`.
-3. **Every line is correlatable.** If you cannot get `request_id` onto a line,
+3. **Panics are recovered in two different places.** `middleware.Recoverer`
+   catches HTTP handler panics; a panic inside a *resolver* is caught by gqlgen
+   and goes through `graph.recoverPanic`. Never leave gqlgen's default recover
+   in place — it prints raw text to stderr.
+4. **Every line is correlatable.** If you cannot get `request_id` onto a line,
    put on it whatever identifies the work instead (`task_id`, `type`, `path`).
 
 To read logs and triage failures: [../docs/DEBUGGING.md](../docs/DEBUGGING.md).

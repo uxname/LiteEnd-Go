@@ -4,7 +4,9 @@ package graph
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
+	"runtime/debug"
 
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/handler/extension"
@@ -13,11 +15,13 @@ import (
 	"github.com/99designs/gqlgen/graphql/playground"
 	coderws "github.com/coder/websocket"
 	"github.com/vektah/gqlparser/v2/ast"
+	"github.com/vektah/gqlparser/v2/gqlerror"
 
 	"github.com/uxname/liteend-go/internal/auth"
 	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/graph/generated"
 	"github.com/uxname/liteend-go/internal/graph/resolver"
+	"github.com/uxname/liteend-go/internal/logger"
 )
 
 // NewHandler builds the GraphQL HTTP handler (queries, mutations, subscriptions).
@@ -76,9 +80,26 @@ func NewHandler(
 	srv.Use(extension.FixedComplexityLimit(config.GraphQLComplexityLimit))
 	srv.Use(&LoggingExtension{})
 
+	// A panic inside a resolver is recovered by gqlgen, never by
+	// middleware.Recoverer — so `panic_recovered` does not fire for the single
+	// most likely place to panic. gqlgen's default writes the value and the
+	// stack to stderr with fmt.Fprintln + debug.PrintStack: raw text, no
+	// request_id, and a shape a JSON log collector drops. Route it through the
+	// request-scoped logger instead; the user-facing message is unchanged.
+	srv.SetRecoverFunc(recoverPanic)
+
 	srv.SetErrorPresenter(newErrorPresenter(isProd))
 
 	return srv
+}
+
+// recoverPanic turns a recovered resolver panic into a structured, correlated
+// log line and the same user-facing message gqlgen's default returns.
+func recoverPanic(ctx context.Context, err any) error {
+	logger.From(ctx).LogAttrs(ctx, slog.LevelError, "graphql_panic",
+		slog.Any("panic", err),
+		slog.String("stack", string(debug.Stack())))
+	return gqlerror.Errorf("internal system error")
 }
 
 // Playground returns the GraphQL IDE handler (replaces Altair).

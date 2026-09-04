@@ -1,7 +1,10 @@
 package graph
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,9 +12,11 @@ import (
 
 	coderws "github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
+	"github.com/vektah/gqlparser/v2/gqlerror"
 
 	"github.com/uxname/liteend-go/internal/auth"
 	"github.com/uxname/liteend-go/internal/graph/resolver"
+	"github.com/uxname/liteend-go/internal/logger"
 )
 
 // originSelf asks wsHandshake to send the test server's own URL as Origin.
@@ -73,4 +78,30 @@ func TestWebsocket_UnlistedOriginRejected(t *testing.T) {
 	t.Parallel()
 	status := wsHandshake(t, []string{"http://localhost:3000"}, "http://evil.example")
 	require.Equal(t, http.StatusForbidden, status)
+}
+
+// A resolver panic is recovered by gqlgen, never by middleware.Recoverer, so
+// `panic_recovered` does not cover it. gqlgen's default prints the stack to
+// stderr as raw text — unparseable and uncorrelated. This pins it to slog.
+func TestRecoverPanic_LogsStructuredAndCorrelated(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	ctx := logger.Into(
+		context.Background(),
+		slog.New(slog.NewJSONHandler(&buf, nil)).With(slog.String("request_id", "req-9")),
+	)
+
+	userErr := recoverPanic(ctx, "boom")
+	var gqlErr *gqlerror.Error
+	require.ErrorAs(t, userErr, &gqlErr)
+	require.Equal(t, "internal system error", gqlErr.Message,
+		"the client-facing message stays exactly gqlgen's default")
+
+	var line map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &line))
+	require.Equal(t, "graphql_panic", line["msg"])
+	require.Equal(t, slog.LevelError.String(), line["level"])
+	require.Equal(t, "boom", line["panic"])
+	require.Equal(t, "req-9", line["request_id"])
+	require.NotEmpty(t, line["stack"])
 }

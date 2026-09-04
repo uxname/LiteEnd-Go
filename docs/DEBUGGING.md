@@ -20,6 +20,8 @@ Key log lines (the `msg` field):
 | `graphql_operation` | every GraphQL op | `operation`, `type`, `variables` (redacted), `duration_ms`, `errors`, `request_id`, `user_id` |
 | `graphql_error` | every GraphQL error | `error` (**never masked**), `code`, `path`, `request_id` |
 | `panic_recovered` | HTTP handler panic | `panic`, `stack`, `method`, `path`, `request_id` |
+| `graphql_panic` | panic **inside a resolver** (gqlgen recovers these, not the HTTP middleware) | `panic`, `stack`, `request_id` |
+| `upload_error` | rejected/failed upload or download | `status`, `reason`, `error`, `request_id` |
 | `db_query_slow` | query over 200 ms | `sql`, `duration_ms`, `request_id` |
 | `db_query_failed` | query returned an error | `sql`, `duration_ms`, `error`, `request_id` |
 | `job_started` / `job_finished` | each background job | `type`, `task_id`, `request_id`, `duration_ms`, `ok` |
@@ -77,7 +79,7 @@ docker compose logs --no-log-prefix app | jq -c 'select(.msg=="http_request")' |
 |---|---|---|
 | GraphQL `code: UNAUTHENTICATED` (401) | No/invalid token; mock off | In dev set `OIDC_MOCK_ENABLED=true` (non-prod) and send `x-mock-sub`, or pass a valid `Authorization: Bearer …`. Check `OIDC_ISSUER/AUDIENCE/JWKS_URI`. |
 | GraphQL `code: FORBIDDEN` (403) | Authenticated but lacks role | Roles live on the DB profile, **not** the token (`auth.RequireRole`). Grant the role in the DB (pgweb `:5100`). |
-| GraphQL `code: INTERNAL_SERVER_ERROR` (500) | Unhandled domain error / panic | Find the `request_id`; the `graphql_error` line has the **unmasked** message even in production, and `panic_recovered` has the stack. |
+| GraphQL `code: INTERNAL_SERVER_ERROR` (500) | Unhandled domain error / panic | Find the `request_id`; the `graphql_error` line has the **unmasked** message even in production, and `graphql_panic` (resolver) or `panic_recovered` (HTTP handler) has the stack. |
 | A request "just hangs" or the app feels slow | A query without an index, or one waiting on a lock | `jq -c 'select(.msg=="db_query_slow")'` — the `sql` and `duration_ms` are on the line, with the `request_id` that caused it. |
 | Browser CORS error | Origin not allowed | Add the SPA origin to `CORS_ORIGIN` (comma-separated) and restart. |
 | Frontend codegen fails | Backend not running / schema stale | Start backend (`task start:dev`); after schema edits run `task gen` and commit. |
@@ -97,7 +99,7 @@ docker compose logs --no-log-prefix app | jq -c 'select(.msg=="http_request")' |
 This template keeps observability to structured logs + health checks on purpose.
 When a derived project needs more, add (in order of usual value):
 
-- **Error tracking** — Sentry (or similar): ship `panic_recovered`/`job_panic`
+- **Error tracking** — Sentry (or similar): ship `panic_recovered`/`graphql_panic`/`job_panic`
   with stacks to a remote service. DSN-gate it so it is a no-op when unset.
 - **Metrics** — Prometheus `/metrics` + Grafana: request rate/latency, error
   rate by status, queue depth/retries, pool stats.

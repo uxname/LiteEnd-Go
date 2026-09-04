@@ -195,5 +195,10 @@ func (s *Service) toCache(ctx context.Context, p sqlc.Profile) {
 }
 
 func (s *Service) invalidate(ctx context.Context, sub string) {
-	_ = s.cache.Delete(ctx, cacheKey(sub))
+	// A failed invalidation is worse than a failed cache write (which toCache
+	// already logs): the user saves a change and keeps being served the old
+	// profile until the TTL expires, with nothing in the log to explain it.
+	if err := s.cache.Delete(ctx, cacheKey(sub)); err != nil {
+		logger.From(ctx).Warn("profile cache invalidation failed", "error", err)
+	}
 }
