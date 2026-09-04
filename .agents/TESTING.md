@@ -17,9 +17,10 @@ the aggregate total.
 **`.testcoverage.yml` is the source of truth for the numbers — read it, don't trust a
 number quoted in prose (including here).** Two things about it:
 
-- `override.path` is the **module-relative** package path (no module prefix), unlike
-  `exclude.paths` which match the full import path. Get this wrong and the override
-  silently does nothing.
+- **Both** `override.path` and `exclude.paths` are **module-relative** (no module
+  prefix). Get it wrong and the entry silently does nothing — this doc used to claim
+  `exclude.paths` took a full import path, and the result was that generated gqlgen and
+  sqlc code was never actually excluded, dragging the reported total down by ~30 points.
 - Ratchet floors **up** as coverage grows. **Never lower one to dodge a finding** —
   add the missing test. If a floor blocks you, that is the gate working.
 
