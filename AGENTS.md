@@ -18,7 +18,9 @@ lives. Read the file that matches your task — don't read them all.
 | A gate is failing, or you're about to claim "done" | [.agents/QUALITY-GATES.md](./.agents/QUALITY-GATES.md) |
 | Env vars, admin dashboards, volumes, deploy | [.agents/OPERATIONS.md](./.agents/OPERATIONS.md) |
 | Read logs, triage a failure | [docs/DEBUGGING.md](./docs/DEBUGGING.md) |
+| **Why** this backend is the way it is — language, layering, deliberate omissions | [docs/adr/](./docs/adr/) |
 | How this side pairs with the frontend | meta-repo `AGENTS.md` |
+| The architecture diagram (LikeC4) | it lives in the LiteStack meta-repo (`docs/architecture/likec4/`) — update it there, never start a second model here |
 
 ## Golden rules
 
