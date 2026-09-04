@@ -2,7 +2,6 @@ package graph
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,7 +22,7 @@ const originSelf = "self"
 // sends no Origin header, like a non-browser client.
 func wsHandshake(t *testing.T, allowedOrigins []string, origin string) int {
 	t.Helper()
-	mw := auth.NewMiddleware(nil, nil, slog.Default(), true)
+	mw := auth.NewMiddleware(nil, nil, true)
 	srv := httptest.NewServer(NewHandler(&resolver.Resolver{}, mw, false, allowedOrigins))
 	t.Cleanup(srv.Close)
 

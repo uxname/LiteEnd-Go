@@ -11,8 +11,11 @@ import (
 	"runtime/debug"
 	"time"
 
+	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/uxname/liteend-go/internal/logger"
 )
 
 // TaskTypeTest is the asynq task type for the test queue.
@@ -27,21 +30,26 @@ const concurrency = 5
 // maxRetry matches the BullMQ retry policy (3 attempts).
 const maxRetry = 3
 
-// TestJobPayload is the job data {message, date}.
+// TestJobPayload is the job data {message, date}. RequestID carries the id of
+// the request that enqueued the job: asynq has no task headers, so correlation
+// has to travel in the payload. Every payload type should keep this field —
+// jobLogger reads it back by name, whatever the rest of the payload looks like.
 type TestJobPayload struct {
-	Message string `json:"message"`
-	Date    string `json:"date"`
+	Message   string `json:"message"`
+	Date      string `json:"date"`
+	RequestID string `json:"request_id,omitempty"`
 }
 
 // Client enqueues background jobs.
 type Client struct {
 	client *asynq.Client
-	log    *slog.Logger
 }
 
-// NewClient builds an enqueuer reusing the shared go-redis client.
-func NewClient(rdb redis.UniversalClient, log *slog.Logger) *Client {
-	return &Client{client: asynq.NewClientFromRedisClient(rdb), log: log}
+// NewClient builds an enqueuer reusing the shared go-redis client. It takes no
+// logger: enqueueing always happens in request scope, so it logs through
+// logger.From(ctx) and keeps the request_id.
+func NewClient(rdb redis.UniversalClient) *Client {
+	return &Client{client: asynq.NewClientFromRedisClient(rdb)}
 }
 
 // Close releases the underlying asynq client.
@@ -55,8 +63,9 @@ func (c *Client) Close() error {
 // AddTestJob enqueues a test job, deduplicated by message for dedupTTL.
 func (c *Client) AddTestJob(ctx context.Context, message string) error {
 	payload, err := json.Marshal(TestJobPayload{
-		Message: message,
-		Date:    time.Now().UTC().Format(time.RFC3339),
+		Message:   message,
+		Date:      time.Now().UTC().Format(time.RFC3339),
+		RequestID: chimw.GetReqID(ctx),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal test job: %w", err)
@@ -72,7 +81,7 @@ func (c *Client) AddTestJob(ctx context.Context, message string) error {
 	// A conflicting id means the same message is already queued/recent — that is
 	// the intended dedup behaviour, so report success.
 	if errors.Is(err, asynq.ErrTaskIDConflict) || errors.Is(err, asynq.ErrDuplicateTask) {
-		c.log.Debug("test job deduplicated", "message", message)
+		logger.From(ctx).Debug("test job deduplicated", "message", message)
 		return nil
 	}
 	if err != nil {
@@ -102,7 +111,7 @@ func NewWorker(rdb redis.UniversalClient, log *slog.Logger) *Worker {
 // the HTTP middleware), so failures are never silent.
 func (w *Worker) Start() error {
 	mux := asynq.NewServeMux()
-	mux.Use(w.recoverer, w.accessLog)
+	mux.Use(w.jobLogger, w.recoverer, w.accessLog)
 	mux.HandleFunc(TaskTypeTest, w.handleTest)
 	if err := w.srv.Start(mux); err != nil {
 		return fmt.Errorf("start queue worker: %w", err)
@@ -116,9 +125,8 @@ func (w *Worker) recoverer(next asynq.Handler) asynq.Handler {
 	return asynq.HandlerFunc(func(ctx context.Context, t *asynq.Task) (err error) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				w.log.LogAttrs(
+				logger.From(ctx).LogAttrs(
 					ctx, slog.LevelError, "job_panic",
-					slog.String("type", t.Type()),
 					slog.Any("panic", rec),
 					slog.String("stack", string(debug.Stack())),
 				)
@@ -129,21 +137,48 @@ func (w *Worker) recoverer(next asynq.Handler) asynq.Handler {
 	})
 }
 
-// accessLog logs each job's start and completion with type, id and duration.
+// jobLogger stores a job-scoped logger (type, task_id and — when the payload
+// carries one — the request_id that enqueued the job) in ctx, so every line a
+// handler writes via logger.From(ctx) is correlated. Background analog of
+// middleware.ContextLogger; must be the outermost job middleware.
+func (w *Worker) jobLogger(next asynq.Handler) asynq.Handler {
+	return asynq.HandlerFunc(func(ctx context.Context, t *asynq.Task) error {
+		taskID, _ := asynq.GetTaskID(ctx)
+		log := w.log.With(slog.String("type", t.Type()), slog.String("task_id", taskID))
+		if reqID := payloadRequestID(t); reqID != "" {
+			log = log.With(slog.String("request_id", reqID))
+		}
+		return next.ProcessTask(logger.Into(ctx, log), t)
+	})
+}
+
+// payloadRequestID digs the enqueueing request's id out of any payload that has
+// a "request_id" field, ignoring everything else in it. A payload without one
+// (or one that is not a JSON object) simply yields "".
+func payloadRequestID(t *asynq.Task) string {
+	var meta struct {
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(t.Payload(), &meta); err != nil {
+		return ""
+	}
+	return meta.RequestID
+}
+
+// accessLog logs each job's start and completion with duration and outcome.
+// A failed job logs at Error so `level=ERROR` selects it, matching the HTTP side.
 func (w *Worker) accessLog(next asynq.Handler) asynq.Handler {
 	return asynq.HandlerFunc(func(ctx context.Context, t *asynq.Task) error {
 		start := time.Now()
-		taskID, _ := asynq.GetTaskID(ctx)
-		w.log.LogAttrs(
-			ctx, slog.LevelInfo, "job_started",
-			slog.String("type", t.Type()),
-			slog.String("task_id", taskID),
-		)
+		log := logger.From(ctx)
+		log.LogAttrs(ctx, slog.LevelInfo, "job_started")
 		err := next.ProcessTask(ctx, t)
-		w.log.LogAttrs(
-			ctx, slog.LevelInfo, "job_finished",
-			slog.String("type", t.Type()),
-			slog.String("task_id", taskID),
+		level := slog.LevelInfo
+		if err != nil {
+			level = slog.LevelError
+		}
+		log.LogAttrs(
+			ctx, level, "job_finished",
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 			slog.Bool("ok", err == nil),
 		)
@@ -158,10 +193,13 @@ func errorHandler(log *slog.Logger) asynq.ErrorHandler {
 		taskID, _ := asynq.GetTaskID(ctx)
 		retried, _ := asynq.GetRetryCount(ctx)
 		maxRetry, _ := asynq.GetMaxRetry(ctx)
+		// asynq calls the ErrorHandler outside the mux, so ctx never passed
+		// through jobLogger — the correlation fields are rebuilt here by hand.
 		log.LogAttrs(
 			ctx, slog.LevelError, "job_failed",
 			slog.String("type", t.Type()),
 			slog.String("task_id", taskID),
+			slog.String("request_id", payloadRequestID(t)),
 			slog.Int("attempt", retried),
 			slog.Int("max_retry", maxRetry),
 			slog.String("error", err.Error()),
@@ -172,14 +210,15 @@ func errorHandler(log *slog.Logger) asynq.ErrorHandler {
 // Stop gracefully shuts the worker down.
 func (w *Worker) Stop() { w.srv.Shutdown() }
 
-func (w *Worker) handleTest(_ context.Context, t *asynq.Task) error {
+func (w *Worker) handleTest(ctx context.Context, t *asynq.Task) error {
 	var p TestJobPayload
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return fmt.Errorf("unmarshal test payload: %w", err)
 	}
-	w.log.Info("processing test job", "message", p.Message, "date", p.Date)
+	log := logger.From(ctx)
+	log.Info("processing test job", "message", p.Message, "date", p.Date)
 	time.Sleep(time.Second) // mirror the TS 1s simulated work
-	w.log.Info("finished test job", "message", p.Message)
+	log.Info("finished test job", "message", p.Message)
 	return nil
 }
 

@@ -51,12 +51,27 @@ func newErrorPresenter(isProd bool) graphql.ErrorPresenterFunc {
 			}
 		}
 
+		isInternal := gqlErr.Extensions["code"] == codeInternal
+
+		// Every GraphQL error gets exactly one server-side line, with its ORIGINAL
+		// message — before the production masking below throws it away. Client
+		// faults (UNAUTHENTICATED, FORBIDDEN, BAD_USER_INPUT, …) log at Warn, ours
+		// at Error, mirroring middleware.statusLevel. Without this a wave of 403s
+		// or a broken query left no trace at all: GraphQL always answers HTTP 200,
+		// so the access log cannot see it either.
+		level := slog.LevelWarn
+		if isInternal {
+			level = slog.LevelError
+		}
+		logger.From(ctx).LogAttrs(ctx, level, "graphql_error",
+			slog.String("error", gqlErr.Message),
+			slog.Any("code", gqlErr.Extensions["code"]),
+			slog.String("path", gqlErr.Path.String()),
+			slog.String("request_id", requestID))
+
 		// Mask only genuinely-internal errors in production; client-facing codes
 		// (UNAUTHENTICATED, FORBIDDEN, BAD_USER_INPUT, …) carry safe messages.
-		if isProd && gqlErr.Extensions["code"] == codeInternal {
-			logger.From(ctx).LogAttrs(ctx, slog.LevelError, "internal graphql error",
-				slog.String("error", gqlErr.Message),
-				slog.String("requestId", requestID))
+		if isProd && isInternal {
 			gqlErr.Message = genericInternalMessage
 		}
 		return gqlErr

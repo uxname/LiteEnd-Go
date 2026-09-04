@@ -49,6 +49,10 @@ lives. Read the file that matches your task — don't read them all.
 - Don't expose an admin dashboard without the auth proxy / Basic-Auth.
 - Don't use the global `slog` logger in `internal/` — inject `*slog.Logger`, or use
   `logger.From(ctx)` in request scope.
+- Don't log a failure at `INFO`. `level=ERROR` must select exactly what is *our*
+  fault; a client fault is `WARN`. See [.agents/ARCHITECTURE.md](./.agents/ARCHITECTURE.md#logging).
+- Don't swallow an error path without a log line. If it is masked for the client,
+  the original message goes to the log first.
 - Don't let domain/infra packages import the transport layer (depguard blocks it).
 - Don't widen a layer's `mayDependOn` to make an import compile.
 - Don't add heavyweight frameworks; this template values a small, idiomatic stack.

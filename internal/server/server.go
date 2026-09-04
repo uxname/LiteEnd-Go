@@ -29,13 +29,20 @@ type Server struct {
 func New(cfg *config.Config, log *slog.Logger, rdb *redis.Client) *Server {
 	r := chi.NewRouter()
 
-	// Order mirrors the TS Fastify setup: request-id → recovery → real-ip →
-	// logging → secure-headers → compression → rate-limit → CORS → body-limit.
+	// Order: request-id → context-logger → real-ip → logging → recovery →
+	// secure-headers → compression → rate-limit → CORS → body-limit.
+	//
+	// RequestLogger must wrap Recoverer, not the other way round: a panic
+	// unwinds past every logging call above it, so with the recoverer on the
+	// outside a panicking request produced `panic_recovered` and NO
+	// `http_request` line at all. Inside, the panic is turned into a 500 before
+	// the access log runs, so the worst failures are the ones you can still find
+	// by method/path/status.
 	r.Use(chimw.RequestID)
 	r.Use(appmw.ContextLogger(log)) // request-scoped logger (request_id) for logger.From(ctx)
-	r.Use(appmw.Recoverer(log))
-	r.Use(appmw.RealIP) // honours X-Forwarded-For (trustProxy)
+	r.Use(appmw.RealIP)             // honours X-Forwarded-For (trustProxy)
 	r.Use(appmw.RequestLogger(log))
+	r.Use(appmw.Recoverer(log))
 	r.Use(appmw.SecureHeaders(cfg.IsProduction()))
 	r.Use(chimw.Compress(5))
 	if rdb != nil {

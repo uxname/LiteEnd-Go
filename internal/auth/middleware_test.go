@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -39,7 +38,7 @@ func (f fakeProfiles) FindOrCreateMockUser(context.Context) (sqlc.Profile, error
 }
 
 func newMockMiddleware(p Profiles) *Middleware {
-	return NewMiddleware(nil, p, slog.New(slog.DiscardHandler), true)
+	return NewMiddleware(nil, p, true)
 }
 
 func TestAuthenticateCreds_MockDefaultUser(t *testing.T) {
@@ -63,7 +62,7 @@ func TestAuthenticateCreds_MockSubImpersonation(t *testing.T) {
 
 func TestAuthenticateCreds_NoMockNoBearerIsNil(t *testing.T) {
 	t.Parallel()
-	m := NewMiddleware(nil, fakeProfiles{}, slog.New(slog.DiscardHandler), false)
+	m := NewMiddleware(nil, fakeProfiles{}, false)
 	require.Nil(t, m.AuthenticateCreds(context.Background(), "", ""))
 }
 
@@ -85,7 +84,7 @@ func TestAuthenticateCreds_MockUserLookupFailureIsAnonymous(t *testing.T) {
 
 func TestRequireAuth_RejectsAnonymousWith401(t *testing.T) {
 	t.Parallel()
-	m := NewMiddleware(nil, fakeProfiles{}, slog.New(slog.DiscardHandler), false)
+	m := NewMiddleware(nil, fakeProfiles{}, false)
 	h := m.RequireAuth(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("the guarded handler must not run for an anonymous request")
 	}))

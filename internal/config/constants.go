@@ -71,6 +71,10 @@ const (
 	DBMaxConnLifetime = time.Hour
 	// DBHealthCheckPeriod is how often the pool probes idle connections.
 	DBHealthCheckPeriod = time.Minute
+	// DBSlowQueryThreshold is the duration above which a query is logged (at
+	// Warn, with its SQL and duration). Logging every query would drown the log
+	// and leak arguments; logging none leaves "the site is slow" undiagnosable.
+	DBSlowQueryThreshold = 200 * time.Millisecond
 
 	// FileUploadTimeout bounds a single upload request.
 	FileUploadTimeout = 30 * time.Second

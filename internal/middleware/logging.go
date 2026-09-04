@@ -35,7 +35,7 @@ func RequestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 			next.ServeHTTP(ww, r)
 
 			log.LogAttrs(
-				r.Context(), slog.LevelInfo, "http_request",
+				r.Context(), statusLevel(ww.Status()), "http_request",
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
 				slog.Int("status", ww.Status()),
@@ -45,5 +45,19 @@ func RequestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 				slog.String("remote", r.RemoteAddr),
 			)
 		})
+	}
+}
+
+// statusLevel maps a response status onto a log level, so `level=ERROR` selects
+// exactly the failed requests (see docs/DEBUGGING.md). A 5xx is our fault and an
+// incident; a 4xx is the caller's and only worth a warning; the rest is routine.
+func statusLevel(status int) slog.Level {
+	switch {
+	case status >= http.StatusInternalServerError:
+		return slog.LevelError
+	case status >= http.StatusBadRequest:
+		return slog.LevelWarn
+	default:
+		return slog.LevelInfo
 	}
 }

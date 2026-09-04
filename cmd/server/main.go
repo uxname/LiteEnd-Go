@@ -33,6 +33,12 @@ func main() {
 		os.Exit(healthcheck())
 	}
 
+	// Install the JSON logger before anything can fail. A boot failure (bad
+	// config, unreachable DB) is exactly the line an operator greps for, and
+	// slog's default text handler would emit it in a shape the log collector
+	// drops. run() re-installs the same logger at the configured level.
+	slog.SetDefault(logger.New(os.Getenv("LOG_LEVEL")))
+
 	if err := run(); err != nil {
 		slog.Error("application failed to start", "error", err)
 		os.Exit(1)

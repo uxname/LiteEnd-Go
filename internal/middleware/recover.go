@@ -20,9 +20,14 @@ func Recoverer(log *slog.Logger) func(http.Handler) http.Handler {
 					if rec == http.ErrAbortHandler { //nolint:errorlint // sentinel comparison per net/http
 						panic(rec) //nolint:forbidigo // re-raise ErrAbortHandler so net/http aborts the connection
 					}
+					// method/path are on the line itself: this middleware sits
+					// inside RequestLogger, but a reader grepping for panics should
+					// not have to join two lines to learn which URL blew up.
 					log.LogAttrs(
 						r.Context(), slog.LevelError, "panic_recovered",
 						slog.Any("panic", rec),
+						slog.String("method", r.Method),
+						slog.String("path", r.URL.Path),
 						slog.String("request_id", middleware.GetReqID(r.Context())),
 						slog.String("stack", string(debug.Stack())),
 					)

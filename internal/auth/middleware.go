@@ -33,14 +33,17 @@ type Profiles interface {
 type Middleware struct {
 	verifier    *Verifier
 	profiles    Profiles
-	log         *slog.Logger
 	mockEnabled bool
 }
 
 // NewMiddleware builds the auth middleware. mockEnabled mirrors
-// OIDC_MOCK_ENABLED && env != production.
-func NewMiddleware(v *Verifier, p Profiles, log *slog.Logger, mockEnabled bool) *Middleware {
-	return &Middleware{verifier: v, profiles: p, log: log, mockEnabled: mockEnabled}
+// OIDC_MOCK_ENABLED && env != production. There is no injected logger on
+// purpose: every line this middleware writes is request-scoped, so it logs via
+// logger.From(ctx) and inherits the request_id (and the caller's identity once
+// resolved) — a security event nobody can tie to a request or an IP is close to
+// useless.
+func NewMiddleware(v *Verifier, p Profiles, mockEnabled bool) *Middleware {
+	return &Middleware{verifier: v, profiles: p, mockEnabled: mockEnabled}
 }
 
 // Optional attaches the authenticated user to the context when a valid token
@@ -98,7 +101,7 @@ func (m *Middleware) resolve(ctx context.Context, bearer, mockSub string) (user 
 		}
 		p, err := m.profiles.FindOrCreateMockUser(ctx)
 		if err != nil {
-			m.log.Error("mock user resolution failed", "error", err)
+			logger.From(ctx).Error("mock user resolution failed", "error", err)
 			return nil, false
 		}
 		return &p, false
@@ -110,17 +113,17 @@ func (m *Middleware) resolve(ctx context.Context, bearer, mockSub string) (user 
 	sub, err := m.verifier.Verify(ctx, bearer)
 	if err != nil {
 		if isProviderUnavailable(err) {
-			m.log.Warn("oidc provider unavailable during token verification", "error", err)
+			logger.From(ctx).Warn("oidc provider unavailable during token verification", "error", err)
 			return nil, true
 		}
 		// A failed verification is a security-relevant event; log at Warn so it is
 		// visible at production log levels (not just Debug).
-		m.log.Warn("token verification failed", "error", err)
+		logger.From(ctx).Warn("token verification failed", "error", err)
 		return nil, false
 	}
 	p, err := m.profiles.FindOrCreateBySub(ctx, sub)
 	if err != nil {
-		m.log.Error("find-or-create profile failed", "error", err)
+		logger.From(ctx).Error("find-or-create profile failed", "error", err)
 		return nil, false
 	}
 	return &p, false

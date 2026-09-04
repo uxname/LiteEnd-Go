@@ -49,7 +49,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 		return nil, err
 	}
 
-	database, err := db.New(ctx, cfg, log)
+	database, err := db.New(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -71,10 +71,10 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	// Auth.
 	verifier := auth.NewVerifier(ctx, cfg)
 	mockEnabled := cfg.OIDCMockEnabled && !cfg.IsProduction()
-	authMW := auth.NewMiddleware(verifier, profiles, log, mockEnabled)
+	authMW := auth.NewMiddleware(verifier, profiles, mockEnabled)
 
 	// Queue.
-	queueClient := queue.NewClient(rdb.Raw(), log)
+	queueClient := queue.NewClient(rdb.Raw())
 	app.cleanup = append(app.cleanup, func() { _ = queueClient.Close() })
 	worker := queue.NewWorker(rdb.Raw(), log)
 	if err := worker.Start(); err != nil {

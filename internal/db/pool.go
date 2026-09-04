@@ -4,7 +4,6 @@ package db
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strconv"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -20,7 +19,9 @@ type DB struct {
 }
 
 // New opens a pgx pool, registers custom enum types, and verifies connectivity.
-func New(ctx context.Context, cfg *config.Config, _ *slog.Logger) (*DB, error) {
+// It takes no logger: the query tracer logs through logger.From(ctx) so a slow
+// or failed query carries the request_id of whoever caused it.
+func New(ctx context.Context, cfg *config.Config) (*DB, error) {
 	poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL())
 	if err != nil {
 		return nil, fmt.Errorf("parse pool config: %w", err)
@@ -44,6 +45,10 @@ func New(ctx context.Context, cfg *config.Config, _ *slog.Logger) (*DB, error) {
 	// Register the profile_role enum (and its array) on every new connection so
 	// pgx can decode profile_role[] into []sqlc.ProfileRole.
 	poolCfg.AfterConnect = registerEnumTypes
+
+	// Slow/failed queries are the one DB signal worth having in the log; without
+	// it a latency incident has no evidence beyond the request duration.
+	poolCfg.ConnConfig.Tracer = slowQueryTracer{}
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
