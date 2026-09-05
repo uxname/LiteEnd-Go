@@ -114,8 +114,12 @@ Four variables deserve special care:
 
 - **`TRUSTED_PROXY_HOPS`** (default 1) is how many reverse proxies actually sit in
   front of this app. The client address — the rate limiter's key — is taken that
-  many entries from the **right** of `X-Forwarded-For`, because each proxy appends
-  and only the rightmost entries were written by a proxy rather than by the caller.
+  many entries from the **right** of `X-Forwarded-For`, because a proxy that appends
+  to that header leaves only the rightmost entries beyond the caller's reach.
+  **That is a requirement on your proxy, not a property of the header**: a proxy
+  configured to forward the request untouched appends nothing, and then the
+  rightmost entry is the caller's own. `docs/DEPLOY.md` in the meta-repo carries the
+  per-proxy settings and a recipe for checking yours.
   `0` means no proxy, and then `X-Forwarded-For` and `X-Real-IP` are ignored
   entirely. Two is a perfectly normal value (a CDN or cloud load balancer in front
   of your own proxy). Both mistakes are silent: too **high** and the caller pads the

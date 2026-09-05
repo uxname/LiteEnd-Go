@@ -45,7 +45,9 @@ lives. Read the file that matches your task — don't read them all.
 ## Don'ts
 
 - Don't enable `OIDC_MOCK_ENABLED` in production (config rejects it).
-- Don't bypass `upload.SafeFileInfo` when serving files (path-traversal guard).
+- Don't build an object key from a client-supplied name without `objectKey`/`safeExt`
+  (`internal/upload/service.go`) — an object key is a path, and that pair is the
+  path-traversal guard. It must stay covered by a test.
 - Don't expose an admin dashboard without the auth proxy / Basic-Auth.
 - Don't use the global `slog` logger in `internal/` — inject `*slog.Logger`, or use
   `logger.From(ctx)` in request scope.

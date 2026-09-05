@@ -258,8 +258,10 @@ Two of those matter as soon as you run more than one copy of the app:
   (default 100), with room left for migrations, `psql` and the dashboards.
 - **`TRUSTED_PROXY_HOPS`** decides which address the rate limiter counts against.
   The address is read that many entries from the **right** of `X-Forwarded-For`,
-  because proxies append to that header and everything further left is whatever
-  the caller typed. Set it to the number of proxies you really run (`0` = none, and
+  because a proxy that appends to that header leaves everything further left as
+  whatever the caller typed. Your proxy has to actually append — one forwarding the
+  request untouched adds nothing, and then the rightmost entry is the caller's;
+  `docs/DEPLOY.md` has the settings and a way to check. Set it to the number of proxies you really run (`0` = none, and
   then the forwarding headers are ignored). Guess too high and a caller can pad the
   header to choose its own address; too low and every client shares one bucket.
 
