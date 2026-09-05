@@ -21,7 +21,7 @@ Key log lines (the `msg` field):
 | `graphql_error` | every GraphQL error | `error` (**never masked**), `code`, `path`, `request_id` |
 | `panic_recovered` | HTTP handler panic | `panic`, `stack`, `method`, `path`, `request_id` |
 | `graphql_panic` | panic **inside a resolver** (gqlgen recovers these, not the HTTP middleware) | `panic`, `stack`, `request_id` |
-| `upload_error` | rejected/failed upload or download | `status`, `reason`, `error`, `request_id` |
+| `upload_error` | rejected or failed upload | `status`, `reason` (the client-facing message), `error` (the real cause), `request_id` |
 | `db_query_slow` | query over 200 ms | `sql`, `duration_ms`, `request_id` |
 | `db_query_failed` | query returned an error | `sql`, `duration_ms`, `error`, `request_id` |
 | `job_started` / `job_finished` | each background job | `type`, `task_id`, `request_id`, `duration_ms`, `ok` |
@@ -51,6 +51,12 @@ PII). Both show as `[REDACTED]`.
 2. Filter the logs by that id — you get the whole story of the request: the
    `http_request` access line, the `graphql_operation` line, and any domain
    lines in between.
+
+With more than one copy of the app running, `docker compose logs app` already
+interleaves all of them, and `request_id` is what separates the stories again — one
+request is served start to finish by one copy, so filtering by the id gives you that
+copy's account of it and nothing else. Add `--no-log-prefix` to drop the container
+name, or leave it on to see *which* copy answered.
 
 ```sh
 # dev (app on host): logs go to the terminal running `task start:dev`
@@ -84,12 +90,18 @@ docker compose logs --no-log-prefix app | jq -c 'select(.msg=="http_request")' |
 | Browser CORS error | Origin not allowed | Add the SPA origin to `CORS_ORIGIN` (comma-separated) and restart. |
 | Frontend codegen fails | Backend not running / schema stale | Start backend (`task start:dev`); after schema edits run `task gen` and commit. |
 | Migrations fail / schema drift | Local DB in a bad state | `task db:reset` (destroys local DB), then `task db:migrate`. |
-| `/health` returns 503 | DB/Redis down or heap over threshold | Body names the failing check (db/redis/memory). Ensure `docker compose up -d db redis`. |
+| `/readyz` (or its alias `/health`) returns 503 | DB/Redis down or heap over threshold | Body names the failing check (db/redis/memory). Ensure `docker compose up -d db redis`. `/livez` stays 200 through all of this on purpose — it only says the process is alive. |
+| Upload answers 500; `upload_error` has `reason: "Failed to save metadata"` | Read the `error` field on that line — it names the real cause, either the object storage or Postgres | Storage not running locally: `docker compose up -d garage garage-init` (`task start:dev` does not start it). Otherwise check `S3_ENDPOINT` — that is the address **the app** connects to, not the public `S3_PUBLIC_BASE_URL`. Nothing is half-written: a failure removes the objects already stored. |
+| Upload succeeds but the returned link 404s in the browser | `S3_PUBLIC_BASE_URL` wrong | It must be the prefix **the browser** resolves, bucket name included; the URL is that value + `/` + the object key. |
 | Background job “did nothing” | Job failed/panicked silently | Look for `job_failed` / `job_panic` by `type`/`task_id`; inspect queue state in Asynqmon (`:5300`). To find the request that enqueued it, filter by the job line's `request_id`. |
 
 ## Quick reference
 
-- Health: `curl localhost:4000/health` → `{"status":"ok"}`.
+- Liveness: `curl localhost:4000/livez` → `{"status":"ok"}` (process is up; touches
+  nothing else — this is what the container HEALTHCHECK probes).
+- Readiness: `curl localhost:4000/readyz` → per-dependency status, 503 if one is
+  unusable — this is what a reverse proxy should gate traffic on. `/health` is an
+  alias of it.
 - GraphQL IDE: `/playground` (Basic-Auth, dev login `admin`/`admin`).
 - Dashboards (Basic-Auth): pgweb `:5100`, RedisInsight `:5200`, Asynqmon `:5300`.
 - Schema (source of truth): `internal/graph/schema.graphqls` (every field documented).

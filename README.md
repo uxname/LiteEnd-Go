@@ -30,7 +30,7 @@ task setup       # one-time: copy .env, hooks, codegen, start DB, run migrations
 task start:dev   # hot-reload dev server — rebuilds on every .go change
 ```
 
-Verify: <http://localhost:4000/health> → `{"status":"ok"}`
+Verify: <http://localhost:4000/readyz> → `{"status":"ok", ...}`
 
 ### Path B — Everything in Docker (needs only Docker, no Go required)
 ```bash
@@ -89,7 +89,7 @@ Read [AGENTS.md](AGENTS.md) once you want the deeper "why" behind the rules.
 | Area | What it does |
 |---|---|
 | GraphQL | `me`, `updateProfile`, `addTestJob`, admin-only `debug`/`echo`/`testTranslation`, and a `profileUpdated` live subscription (WebSocket) |
-| REST | `POST /upload` (login required, images only, ≤5 MB, ≤10 files), `GET /uploads/*` (public, safe), `GET /health` |
+| REST | `POST /upload` (login required, images only, ≤5 MB, ≤10 files; the file goes to object storage and you get its public URL back), plus the probes `GET /livez`, `GET /readyz` and `GET /health` |
 | Login | OIDC/JWT checked against the provider's keys (JWKS); creates a profile on first login; roles come from the database; dev mock mode |
 | Jobs | an asynq "test" queue with retries and de-duplication (dashboard: Asynqmon) |
 | Translations | en/ru, chosen by the `Accept-Language` header, English as fallback |
@@ -113,9 +113,16 @@ cp .env.example .env
 docker compose up --build
 ```
 
-This starts: the app on `:4000`, Postgres on `:5432`, Redis on `:6379`, and three
-admin dashboards. Open <http://localhost:4000/dev> for a page that links to all of
-them.
+This starts: the app on `:4000`, Postgres on `:5432`, Redis on `:6379`, a
+[Garage](https://garagehq.deuxfleurs.fr) object store for uploaded files (S3 API on
+`:3900`, public file links on `:3902`), and three admin dashboards. Open
+<http://localhost:4000/dev> for a page that links to all of them.
+
+Garage configures itself on the first `up` — a small `garage-init` container writes
+the cluster layout, the access key and the bucket, so there is nothing to run by
+hand afterwards. It needs **Docker Engine 27.4 or newer**: it mounts the Garage
+binary straight out of the Garage image (`type: image`, added in 27.4), which is the
+only way to run that CLI — the image is built `FROM scratch` and has no shell.
 
 ### Option B — app on your machine, database in Docker (best for coding)
 
@@ -125,10 +132,13 @@ task start:dev     # runs the app with auto-reload — restarts on every .go cha
 ```
 
 `task start:dev` uses [wgo](https://github.com/bokwoon95/wgo) for auto-reload — save a
-file and the server restarts on its own.
+file and the server restarts on its own. It brings up Postgres and Redis but not the
+object store, so run `docker compose up -d garage garage-init` too when you want to
+try `POST /upload`; without it the app starts fine and only the upload fails.
 
 > **First time? Sanity check.** After `task start:dev` is running, open
-> <http://localhost:4000/health> — you should see `{"status":"ok"}`. Then open
+> <http://localhost:4000/readyz> — you should see `"status":"ok"` and every
+> dependency listed as ok. Then open
 > <http://localhost:4000/playground> (login `admin` / `admin`) and run
 > `query { me { id roles } }`. If both work, your setup is good.
 
@@ -137,11 +147,13 @@ file and the server restarts on its own.
 > password proxy, and the app's own dev pages (`/dev`, `/playground`, `/swagger`,
 > `/openapi.yaml`) ask for the same login. Default: `admin` / `admin`. Change it
 > before using this anywhere real. The public endpoints (`/graphql`, `/upload`,
-> `/uploads/*`, `/health`) stay open.
+> `/livez`, `/readyz`, `/health`) stay open.
 
-> **Where data lives.** Files you can browse — `./data/uploads` — are stored on
-> your machine. Postgres and Redis keep their own data in Docker volumes (don't
-> put those in `./data` — they're root-owned and would break `go test ./...`).
+> **Where data lives.** Nothing is written into the repo. Postgres, Redis and
+> Garage each keep their data in a Docker volume (don't move those into `./data` —
+> they're root-owned and would break `go test ./...`). Uploaded files go to Garage,
+> not to the app's own filesystem, which is what lets several copies of the app
+> share them. Browse them at the public link the upload returns.
 
 ## Your first change (a walkthrough)
 
@@ -233,6 +245,26 @@ All settings come from environment variables (see `.env.example`). The important
 | `OIDC_*` | login / token checking |
 | `OIDC_MOCK_ENABLED` | dev-only login bypass (refused in production) |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | login for the dashboards and dev pages |
+| `S3_ENDPOINT` | where **the app** reaches the object storage, from inside the network |
+| `S3_PUBLIC_BASE_URL` | where **the browser** downloads files from, bucket name included — a file's URL is this plus `/` plus its object key |
+| `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` / `S3_BUCKET` / `S3_USE_SSL` | the rest of the storage credentials (`S3_BUCKET` defaults to `uploads`; set `S3_USE_SSL=true` only when the endpoint is https) |
+| `DB_POOL_MAX` | database connections **one copy** may open (default 10) — see below |
+| `TRUSTED_PROXY_HOPS` | how many reverse proxies stand in front of the app (default 1) — see below |
+
+Two of those matter as soon as you run more than one copy of the app:
+
+- **`DB_POOL_MAX`** is per copy, and they all share one database. The rule:
+  replicas x `DB_POOL_MAX` must stay below the Postgres `max_connections` limit
+  (default 100), with room left for migrations, `psql` and the dashboards.
+- **`TRUSTED_PROXY_HOPS`** decides which address the rate limiter counts against.
+  The address is read that many entries from the **right** of `X-Forwarded-For`,
+  because proxies append to that header and everything further left is whatever
+  the caller typed. Set it to the number of proxies you really run (`0` = none, and
+  then the forwarding headers are ignored). Guess too high and a caller can pad the
+  header to choose its own address; too low and every client shares one bucket.
+
+The meta-repo's `docs/DEPLOY.md` walks through both, plus the network effects, in
+"Running more than one copy".
 
 ## The API
 
@@ -256,11 +288,11 @@ internal/
   db/         Postgres pool, migrations, generated SQL (sqlc)
   redis/      Redis client, cache, pub/sub
   profile/    the profile service (cache + live-update events)
-  upload/     file uploads and safe file serving
+  upload/     file uploads to S3-compatible object storage (minio-go)
   queue/      background jobs (asynq)
   graph/      GraphQL handler, resolvers, error formatting, logging
   i18n/       translations (en/ru)
-  health/     the /health check
+  health/     the /livez (alive) and /readyz (ready for traffic) probes
   devtools/   the /dev page, Swagger UI, OpenAPI spec
 db/
   migrations/ database migrations (goose)
@@ -309,8 +341,23 @@ health against real Postgres + Redis.
 ## Deploying
 
 The production image is a tiny [distroless](https://github.com/GoogleContainerTools/distroless)
-build — no shell, runs as a non-root user. Migrations run automatically on
-startup (with retries). The container reports health via `server -healthcheck`.
+build — no shell, runs as a non-root user. All configuration comes from the
+container's environment, so the same image runs in every environment.
+
+Migrations run automatically on startup (with retries), under a Postgres advisory
+lock — several copies booting at once against an empty database queue up behind one
+another instead of racing. The container reports health via `server -healthcheck`,
+which probes `/livez`; point your reverse proxy at `/readyz` instead, so a copy with
+a sick dependency is skipped rather than restarted.
+
+`docker-compose.prod.yml` runs the app alone — Postgres, Redis and the object
+storage are external services you point `DATABASE_*`, `REDIS_*` and `S3_*` at. It
+publishes no host port; it joins the reverse proxy's existing network
+(`PROXY_NETWORK`, default `dokploy-network`), which is what lets you run
+`docker compose -f docker-compose.prod.yml up -d --scale app=3`.
+
+Full guide, including what to check before raising that number: the meta-repo's
+`docs/DEPLOY.md`.
 
 ## License
 
