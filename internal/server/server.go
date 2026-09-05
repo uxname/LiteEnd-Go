@@ -39,8 +39,8 @@ func New(cfg *config.Config, log *slog.Logger, rdb *redis.Client) *Server {
 	// the access log runs, so the worst failures are the ones you can still find
 	// by method/path/status.
 	r.Use(chimw.RequestID)
-	r.Use(appmw.ContextLogger(log)) // request-scoped logger (request_id) for logger.From(ctx)
-	r.Use(appmw.RealIP)             // honours X-Forwarded-For (trustProxy)
+	r.Use(appmw.ContextLogger(log))           // request-scoped logger (request_id) for logger.From(ctx)
+	r.Use(appmw.RealIP(cfg.TrustedProxyHops)) // client address from X-Forwarded-For
 	r.Use(appmw.RequestLogger(log))
 	r.Use(appmw.Recoverer(log))
 	r.Use(appmw.SecureHeaders(cfg.IsProduction()))

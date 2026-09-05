@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"math"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -55,18 +54,10 @@ func RateLimit(rdb *redis.Client) func(http.Handler) http.Handler {
 }
 
 func rateKey(r *http.Request) string {
-	ip := clientIP(r)
+	ip := ClientIP(r)
 	p := r.URL.Path
 	if strings.HasPrefix(p, "/upload") || strings.HasPrefix(p, "/graphql") {
 		return "rl:auth:" + ip
 	}
 	return "rl:" + ip
-}
-
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }
