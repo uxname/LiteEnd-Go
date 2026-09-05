@@ -18,6 +18,10 @@ type Config struct {
 	CORSOrigin []string `env:"CORS_ORIGIN" envSeparator:","`
 	LogLevel   string   `env:"LOG_LEVEL" envDefault:"info"`
 	Env        string   `env:"NODE_ENV" envDefault:"development"`
+	// TrustedProxyHops is how many reverse proxies sit in front of this app. The
+	// client address is taken that many entries from the RIGHT of X-Forwarded-For,
+	// so a header forged by the client cannot impersonate another address.
+	TrustedProxyHops int `env:"TRUSTED_PROXY_HOPS" envDefault:"1"`
 
 	// Database
 	DatabaseHost     string `env:"DATABASE_HOST" envDefault:"localhost"`
@@ -25,11 +29,30 @@ type Config struct {
 	DatabaseUser     string `env:"DATABASE_USER" envDefault:"postgres"`
 	DatabasePassword string `env:"DATABASE_PASSWORD,required"`
 	DatabaseName     string `env:"DATABASE_NAME" envDefault:"postgres"`
+	// DBPoolMax is the pool size of ONE replica. Sizing rule:
+	// replicas x DB_POOL_MAX must stay below the Postgres max_connections limit.
+	DBPoolMax int32 `env:"DB_POOL_MAX" envDefault:"10"`
 
 	// Redis
 	RedisHost     string `env:"REDIS_HOST" envDefault:"localhost"`
 	RedisPort     int    `env:"REDIS_PORT" envDefault:"6379"`
 	RedisPassword string `env:"REDIS_PASSWORD"`
+
+	// S3-compatible object storage for uploads. Two addresses on purpose:
+	// S3Endpoint is reachable from INSIDE the container network only (e.g.
+	// http://garage:3900), S3PublicBaseURL is what the browser gets.
+	// The credentials carry no default: an unset one must stop the boot, and an
+	// empty one must too (a blank line in a copied .env is the usual way this
+	// breaks), hence required+notEmpty rather than required alone.
+	S3Endpoint        string `env:"S3_ENDPOINT,required,notEmpty"`
+	S3AccessKeyID     string `env:"S3_ACCESS_KEY_ID,required,notEmpty"`
+	S3SecretAccessKey string `env:"S3_SECRET_ACCESS_KEY,required,notEmpty"`
+	S3Bucket          string `env:"S3_BUCKET" envDefault:"uploads"`
+	S3UseSSL          bool   `env:"S3_USE_SSL" envDefault:"false"`
+	// S3PublicBaseURL is the full public link prefix INCLUDING the bucket name, as
+	// seen by the browser from outside (e.g. http://localhost:8080/uploads).
+	// A file URL is S3PublicBaseURL + "/" + object key.
+	S3PublicBaseURL string `env:"S3_PUBLIC_BASE_URL,required,notEmpty"`
 
 	// OIDC
 	OIDCIssuer      string `env:"OIDC_ISSUER,required"`
@@ -96,6 +119,11 @@ func Load() (*Config, error) {
 	// nothing. This list is now also the WebSocket handshake allowlist, so a stray
 	// space silently kills subscriptions from that origin, not just CORS.
 	cfg.CORSOrigin = trimmedNonEmpty(cfg.CORSOrigin)
+
+	// File URLs are built as S3PublicBaseURL + "/" + key, so a trailing slash on
+	// the configured value would produce "//key" — a link that 404s on some
+	// gateways and defeats caching on the rest.
+	cfg.S3PublicBaseURL = strings.TrimRight(cfg.S3PublicBaseURL, "/")
 
 	// An empty CORS_ORIGIN makes go-chi/cors allow every origin; combined with
 	// AllowCredentials that is unsafe in production, so require an explicit
