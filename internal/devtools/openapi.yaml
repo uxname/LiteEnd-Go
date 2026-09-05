@@ -17,7 +17,7 @@ paths:
 
   /readyz:
     get:
-      summary: Readiness probe — database, Redis and heap are usable
+      summary: Readiness probe — database and Redis decide it; the heap only rides along
       responses:
         "200": { description: Ready }
         "503": { description: Not ready }
