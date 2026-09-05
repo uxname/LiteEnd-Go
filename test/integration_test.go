@@ -252,15 +252,18 @@ func TestSubscription_ProfileUpdated(t *testing.T) {
 	send := func(v any) { require.NoError(t, conn.WriteJSON(v)) }
 	send(map[string]any{"type": "connection_init", "payload": map[string]any{"x-mock-sub": ""}})
 
-	// expect connection_ack
-	require.Eventually(t, func() bool {
+	// One deadline covers the whole wait for the ack. gorilla caches the first
+	// read error in Conn.readErr and answers every later read with it, so a
+	// connection that once hit an expired deadline is dead for good — re-arming
+	// the deadline and reading again can only spin on the cached error.
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+	for {
 		var msg map[string]any
-		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		if err := conn.ReadJSON(&msg); err != nil {
-			return false
+		require.NoError(t, conn.ReadJSON(&msg), "waiting for connection_ack")
+		if msg["type"] == "connection_ack" {
+			break
 		}
-		return msg["type"] == "connection_ack"
-	}, 6*time.Second, 10*time.Millisecond)
+	}
 
 	send(map[string]any{
 		"id":   "1",
@@ -270,19 +273,49 @@ func TestSubscription_ProfileUpdated(t *testing.T) {
 		},
 	})
 
-	// The subscription registers asynchronously on the server. Instead of a fixed
-	// sleep (flaky on slow machines), retry the update until the subscription
-	// delivers a "next" event. Re-publishing the same value is harmless.
-	require.Eventually(t, func() bool {
+	// The subscription registers asynchronously on the server, so the very first
+	// publish can be dropped; re-publishing the same value is harmless, so the
+	// mutation is retried. The socket, however, is read exactly once through, by
+	// one goroutine under one deadline — retrying the read instead (a short
+	// deadline re-armed on every attempt) is what made this test flaky: the first
+	// expired deadline poisoned Conn.readErr and every later attempt returned that
+	// cached error within microseconds, so the retry loop could never recover.
+	event := make(chan error, 1)
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(20*time.Second)))
+	go func() {
+		for {
+			var msg map[string]any
+			if err := conn.ReadJSON(&msg); err != nil {
+				event <- err
+				return
+			}
+			switch msg["type"] {
+			case "next":
+				event <- nil
+				return
+			case "error", "complete":
+				event <- fmt.Errorf("subscription ended with %q: %v", msg["type"], msg["payload"])
+				return
+			}
+		}
+	}()
+
+	// Publishing stays on the test goroutine: gql asserts through require, which
+	// is only legal here, and a rejected mutation (429, a GraphQL error) must fail
+	// the test where it happens instead of being swallowed as a missing event.
+	giveUp := time.After(10 * time.Second)
+	for {
 		gql(t, `mutation($i:ProfileUpdateInput!){updateProfile(input:$i){displayName}}`,
 			map[string]any{"i": map[string]any{"displayName": "WSName"}}, nil)
-		var msg map[string]any
-		_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-		if err := conn.ReadJSON(&msg); err != nil {
-			return false
+		select {
+		case err := <-event:
+			require.NoError(t, err, "the subscription must deliver the profile update")
+			return
+		case <-time.After(300 * time.Millisecond):
+		case <-giveUp:
+			t.Fatal("no subscription event after repeated profile updates")
 		}
-		return msg["type"] == "next"
-	}, 10*time.Second, 100*time.Millisecond, "should receive a subscription event after profile update")
+	}
 }
 
 // --- helpers ---
@@ -298,12 +331,19 @@ func gql(t *testing.T, query string, vars map[string]any, headers map[string]str
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	// A rejected request (429 from the rate limiter, 5xx) carries the
+	// {"statusCode","message"} envelope of internal/httperr, which has no
+	// "errors" key — without this check it would decode into an empty struct and
+	// pass silently.
+	require.Equalf(t, http.StatusOK, resp.StatusCode, "POST /graphql answered %d: %s", resp.StatusCode, body)
 
 	var out struct {
 		Data   map[string]any   `json:"data"`
 		Errors []map[string]any `json:"errors"`
 	}
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+	require.NoError(t, json.Unmarshal(body, &out))
 	require.Empty(t, out.Errors, "graphql errors: %v", out.Errors)
 	return out.Data
 }
