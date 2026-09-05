@@ -1,4 +1,5 @@
-// Package upload handles multipart file uploads and safe file serving.
+// Package upload accepts multipart file uploads and stores them in an
+// S3-compatible object store shared by every replica.
 package upload
 
 import (
@@ -9,12 +10,16 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 
 	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/db/sqlc"
@@ -31,8 +36,8 @@ var ErrNotFound = errors.New("file not found")
 // not in the image allowlist. Callers skip such files rather than failing.
 var ErrDisallowedMime = errors.New("disallowed mime type")
 
-// ErrFileTooLarge is returned by ProcessFile when the written file exceeds
-// UploadMaxFileSize. The partial file is removed before returning.
+// ErrFileTooLarge is returned by ProcessFile when the uploaded file exceeds
+// UploadMaxFileSize. Nothing is stored before returning.
 var ErrFileTooLarge = errors.New("file too large")
 
 const defaultMime = "application/octet-stream"
@@ -40,6 +45,10 @@ const defaultMime = "application/octet-stream"
 // sniffLen is the number of leading bytes inspected for content-based MIME
 // detection (http.DetectContentType only looks at the first 512 bytes).
 const sniffLen = 512
+
+// maxExtLen caps the extension carried from the client-supplied filename into
+// the object key (".jpeg" is 5). Anything longer is dropped, not truncated.
+const maxExtLen = 10
 
 var allowedMimeTypes = map[string]struct{}{ //nolint:gochecknoglobals // static mime allowlist
 	"image/png":  {},
@@ -53,24 +62,83 @@ type Writer interface {
 	CreateUpload(ctx context.Context, arg sqlc.CreateUploadParams) (sqlc.Upload, error)
 }
 
-// Service stores uploaded files on disk and records metadata.
+// objectStore is the subset of the S3 client used to store uploaded objects.
+// Every replica writes to the same bucket, so a file stored by one is readable
+// through all the others.
+type objectStore interface {
+	PutObject(
+		ctx context.Context, bucket, key string, r io.Reader, size int64, opts minio.PutObjectOptions,
+	) (minio.UploadInfo, error)
+	RemoveObject(ctx context.Context, bucket, key string, opts minio.RemoveObjectOptions) error
+}
+
+// Service stores uploaded files as objects and records their metadata.
 type Service struct {
 	q         Writer
+	store     objectStore
+	bucket    string
+	publicURL string
+	// initErr carries a storage misconfiguration to the first upload that needs
+	// storage: New has no way to report one, so the error travels to the caller
+	// (and from there into the log) instead of being dropped.
+	initErr error
+	// uploadDir is the local root SafeFileInfo resolves request paths against.
 	uploadDir string
 }
 
-// New builds an upload Service rooted at <cwd>/data/uploads.
+// New builds an upload Service backed by the configured object store.
+//
+// The storage settings are read from the environment — the same values the
+// process validated at startup — because the composition root builds this
+// service from the query set alone. A missing variable therefore still stops the
+// boot (config.Load requires it); a malformed endpoint surfaces on first upload.
 func New(q Writer) *Service {
 	wd, _ := os.Getwd()
-	return &Service{q: q, uploadDir: filepath.Join(wd, "data", "uploads")}
+	svc := &Service{uploadDir: filepath.Join(wd, "data", "uploads"), q: q}
+
+	cfg, err := config.Load()
+	if err != nil {
+		svc.initErr = fmt.Errorf("load storage config: %w", err)
+		return svc
+	}
+
+	endpoint, secure := parseEndpoint(cfg.S3Endpoint, cfg.S3UseSSL)
+	client, err := minio.New(endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(cfg.S3AccessKeyID, cfg.S3SecretAccessKey, ""),
+		Secure: secure,
+	})
+	if err != nil {
+		svc.initErr = fmt.Errorf("build object storage client: %w", err)
+		return svc
+	}
+
+	svc.store = client
+	svc.bucket = cfg.S3Bucket
+	svc.publicURL = cfg.S3PublicBaseURL
+	return svc
 }
 
-// SavedFile is the per-file result returned to the client.
+// parseEndpoint splits the configured storage address into what minio-go wants:
+// a host[:port] plus a TLS flag. S3_ENDPOINT is documented with a scheme
+// (http://garage:3900), which minio.New rejects, and an https address means TLS
+// whatever S3_USE_SSL says.
+func parseEndpoint(raw string, useSSL bool) (host string, secure bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return raw, useSSL
+	}
+	return u.Host, useSSL || u.Scheme == "https"
+}
+
+// SavedFile is the per-file result returned to the client. Path is the absolute
+// public URL of the stored object: the browser loads it straight from the
+// storage, not through this app.
 type SavedFile struct {
 	Filename string `json:"filename"`
 	Path     string `json:"path"`
 	// internal metadata (not serialised in the public response)
-	filepath         string
+	key              string
+	data             []byte
 	originalFilename string
 	extension        string
 	size             int64
@@ -83,10 +151,19 @@ func AllowedMime(mimetype string) bool {
 	return ok
 }
 
-// ProcessFile validates and writes a single uploaded file, returning its
-// metadata. It returns ErrDisallowedMime if the content-type is not allowed.
-func (s *Service) ProcessFile(ctx context.Context, originalFilename, mimetype string, body io.Reader) (*SavedFile, error) {
-	// Cheap early reject on the client-declared content-type before touching disk.
+// ProcessFile validates a single uploaded file and returns its metadata,
+// including the key and public URL it will get. The bytes are held until
+// SaveMetadata commits the batch, so a request that fails half-way leaves
+// nothing in the bucket to clean up. It returns ErrDisallowedMime if the
+// content-type is not allowed, and ErrFileTooLarge if the body exceeds
+// UploadMaxFileSize.
+//
+// The context is unused: validating and buffering touch nothing cancellable —
+// every remote call of an upload happens in SaveMetadata.
+func (s *Service) ProcessFile(
+	_ context.Context, originalFilename, mimetype string, body io.Reader,
+) (*SavedFile, error) {
+	// Cheap early reject on the client-declared content-type before reading on.
 	if !AllowedMime(mimetype) {
 		return nil, ErrDisallowedMime
 	}
@@ -101,46 +178,69 @@ func (s *Service) ProcessFile(ctx context.Context, originalFilename, mimetype st
 	if !AllowedMime(detected) {
 		return nil, ErrDisallowedMime
 	}
-
-	relDir := relativeDir(time.Now().UTC())
-	fullDir := filepath.Join(s.uploadDir, relDir)
-	// 0o755: uploaded files are served publicly; group/other read also lets
-	// other tooling inspect the named volume mounted at /app/data/uploads.
-	if err := os.MkdirAll(fullDir, 0o755); err != nil { //nolint:gosec // public upload dir
-		return nil, fmt.Errorf("mkdir uploads: %w", err)
+	if s.initErr != nil {
+		return nil, s.initErr
 	}
 
-	ext := filepath.Ext(originalFilename)
-	name := uuid.NewString() + ext
-	fullPath := filepath.Join(fullDir, name)
-
-	writeCtx, cancel := context.WithTimeout(ctx, config.FileUploadTimeout)
-	defer cancel()
-
-	size, err := writeFile(writeCtx, fullPath, body)
+	// The body is buffered whole: it is capped at UploadMaxFileSize (5 MiB) per
+	// file and at BodyLimit (10 MiB) per request, and PutObject stores a known
+	// size in one atomic PUT instead of a multipart upload. Raising either cap
+	// raises this memory ceiling with it.
+	data, err := io.ReadAll(io.LimitReader(body, config.UploadMaxFileSize+1))
 	if err != nil {
-		_ = os.Remove(fullPath) //nolint:gosec // content-addressed path under upload root
-		return nil, err
+		return nil, fmt.Errorf("read upload: %w", err)
 	}
-	if size > config.UploadMaxFileSize {
-		_ = os.Remove(fullPath) //nolint:gosec // content-addressed path under upload root
+	if int64(len(data)) > config.UploadMaxFileSize {
 		return nil, ErrFileTooLarge
 	}
 
+	key := objectKey(time.Now().UTC(), originalFilename)
 	return &SavedFile{
-		Filename:         name,
-		Path:             filepath.ToSlash(filepath.Join("/uploads", relDir, name)),
-		filepath:         filepath.ToSlash(filepath.Join(relDir, name)),
+		Filename:         path.Base(key),
+		Path:             s.publicURL + "/" + key,
+		key:              key,
+		data:             data,
 		originalFilename: originalFilename,
-		extension:        ext,
-		size:             size,
+		extension:        path.Ext(key),
+		size:             int64(len(data)),
 		mimetype:         detected,
 	}, nil
 }
 
+// objectKey builds the key an upload is stored under: the date layout plus a
+// random name. The extension is the only part that comes from the client, and
+// object keys are paths — a separator or a ".." inside one would lift the object
+// out of its date prefix, so the extension is sanitised instead of copied.
+func objectKey(t time.Time, originalFilename string) string {
+	return path.Join(relativeDir(t), uuid.NewString()+safeExt(originalFilename))
+}
+
+// safeExt returns the extension of name when it is a short, purely alphanumeric
+// suffix, and "" otherwise. Everything a key must never carry — "/", "\", "..",
+// spaces, control or unicode characters — fails that test.
+func safeExt(name string) string {
+	ext := path.Ext(name)
+	if len(ext) < 2 || len(ext) > maxExtLen {
+		return ""
+	}
+	for _, r := range ext[1:] {
+		if !isASCIIAlnum(r) {
+			return ""
+		}
+	}
+	return ext
+}
+
+func isASCIIAlnum(r rune) bool {
+	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+}
+
+// relativeDir is the date prefix every object key starts with: YYYY/MM/DD/HH-MM.
+func relativeDir(t time.Time) string { return t.Format("2006/01/02/15-04") }
+
 // sniff reads up to sniffLen leading bytes for content detection and returns a
 // reader that replays them ahead of the unread remainder, so the full stream is
-// still written to disk.
+// still stored.
 func sniff(body io.Reader) (head []byte, full io.Reader, err error) {
 	buf := make([]byte, sniffLen)
 	n, readErr := io.ReadFull(body, buf)
@@ -160,32 +260,80 @@ func detectMime(head []byte) string {
 	return detected
 }
 
-// RemoveFiles deletes already-written files from disk. Used to roll back a batch
-// when later persistence fails, so a partial upload does not orphan files.
+// RemoveFiles discards a batch that will not be persisted. Nothing reaches the
+// object store before SaveMetadata, so an abandoned upload leaves no object
+// behind — this only drops the bytes the batch was holding.
 func (s *Service) RemoveFiles(files []*SavedFile) {
 	for _, f := range files {
-		_ = os.Remove(filepath.Join(s.uploadDir, filepath.FromSlash(f.filepath))) //nolint:gosec // path under upload root
+		f.data = nil
 	}
 }
 
-// SaveMetadata persists metadata for all uploaded files.
+// removeObjects deletes the objects a failed batch already stored. It detaches
+// from ctx first: the failure being cleaned up may be that very cancellation.
+func (s *Service) removeObjects(ctx context.Context, files []*SavedFile) {
+	if len(files) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), config.FileUploadTimeout)
+	defer cancel()
+
+	opts := minio.RemoveObjectOptions{}
+	for _, f := range files {
+		if err := s.store.RemoveObject(ctx, s.bucket, f.key, opts); err != nil {
+			// Left behind, the object is unreferenced but still stored, so its key
+			// has to reach the log — this line is the only trace of it.
+			logger.From(ctx).Warn("upload rollback failed", "key", f.key, "error", err.Error())
+		}
+	}
+}
+
+// SaveMetadata commits a validated batch: every file is stored as an object and
+// then recorded in the database. The two move together — if either half fails,
+// the objects this batch wrote are removed again, so a failed upload leaves
+// nothing orphaned in the bucket.
 func (s *Service) SaveMetadata(ctx context.Context, files []*SavedFile, ip string) error {
 	if len(files) == 0 {
 		return nil
 	}
+
+	stored := make([]*SavedFile, 0, len(files))
+	for _, f := range files {
+		if err := s.putObject(ctx, f); err != nil {
+			s.removeObjects(ctx, stored)
+			return err
+		}
+		stored = append(stored, f)
+	}
+
 	for _, f := range files {
 		if _, err := s.q.CreateUpload(ctx, sqlc.CreateUploadParams{
-			Filepath:         f.filepath,
+			Filepath:         f.key,
 			OriginalFilename: f.originalFilename,
 			Extension:        f.extension,
 			Size:             int32(f.size), //nolint:gosec // size is capped at UploadMaxFileSize (5 MiB)
 			Mimetype:         f.mimetype,
 			UploaderIp:       ip,
 		}); err != nil {
+			s.removeObjects(ctx, stored)
 			return fmt.Errorf("save upload metadata: %w", err)
 		}
 	}
 	logger.From(ctx).Info("files uploaded", "count", len(files))
+	return nil
+}
+
+// putObject writes one buffered file to the object store under its key.
+func (s *Service) putObject(ctx context.Context, f *SavedFile) error {
+	putCtx, cancel := context.WithTimeout(ctx, config.FileUploadTimeout)
+	defer cancel()
+
+	opts := minio.PutObjectOptions{ContentType: f.mimetype}
+	if _, err := s.store.PutObject(
+		putCtx, s.bucket, f.key, bytes.NewReader(f.data), int64(len(f.data)), opts,
+	); err != nil {
+		return fmt.Errorf("put object %q: %w", f.key, err)
+	}
 	return nil
 }
 
@@ -210,56 +358,9 @@ func (s *Service) SafeFileInfo(relativePath string) (fullPath, mimeType string, 
 	return resolved, mimeOf(resolved), nil
 }
 
-func mimeOf(path string) string {
-	if t := mime.TypeByExtension(filepath.Ext(path)); t != "" {
+func mimeOf(name string) string {
+	if t := mime.TypeByExtension(filepath.Ext(name)); t != "" {
 		return t
 	}
 	return defaultMime
-}
-
-func relativeDir(t time.Time) string {
-	return filepath.Join(
-		fmt.Sprintf("%04d", t.Year()),
-		fmt.Sprintf("%02d", int(t.Month())),
-		fmt.Sprintf("%02d", t.Day()),
-		fmt.Sprintf("%02d-%02d", t.Hour(), t.Minute()),
-	)
-}
-
-func writeFile(ctx context.Context, path string, body io.Reader) (int64, error) {
-	f, err := os.Create(path) //nolint:gosec // path is content-addressed under upload root
-	if err != nil {
-		return 0, fmt.Errorf("create file: %w", err)
-	}
-
-	done := make(chan struct{})
-	var written int64
-	var copyErr error
-	go func() {
-		// close(done) runs last; the recover turns a panic in io.Copy (e.g. from a
-		// misbehaving body reader) into an error instead of crashing the process,
-		// and still unblocks the select below.
-		defer close(done)
-		// Close the file from the goroutine that owns the write. If writeFile
-		// returns early on <-ctx.Done(), this detached goroutine keeps running, so
-		// closing here (not via a defer in writeFile) prevents io.Copy from writing
-		// into a descriptor the caller already closed.
-		defer func() { _ = f.Close() }()
-		defer func() {
-			if r := recover(); r != nil {
-				copyErr = fmt.Errorf("upload copy panicked: %v", r)
-			}
-		}()
-		written, copyErr = io.Copy(f, body)
-	}()
-
-	select {
-	case <-ctx.Done():
-		return 0, fmt.Errorf("upload cancelled: %w", ctx.Err())
-	case <-done:
-		if copyErr != nil {
-			return written, fmt.Errorf("write upload: %w", copyErr)
-		}
-		return written, nil
-	}
 }

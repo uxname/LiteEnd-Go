@@ -1,7 +1,8 @@
 //go:build integration
 
-// Package test contains end-to-end integration tests backed by real Postgres
-// and Redis containers (testcontainers-go). Run with: go test -tags=integration ./test
+// Package test contains end-to-end integration tests backed by real Postgres,
+// Redis and object-storage containers (testcontainers-go). Run with:
+// go test -tags=integration ./test
 package test
 
 import (
@@ -12,13 +13,17 @@ import (
 	"io"
 	"log/slog"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -32,6 +37,19 @@ import (
 var (
 	server  *httptest.Server
 	appInst *app.App
+	// publicBaseURL is the browser-facing prefix of every stored object, i.e.
+	// what the app hands out as an upload link.
+	publicBaseURL string
+)
+
+// Object storage credentials for the throwaway MinIO container. MinIO is the
+// S3-compatible server used here because it is S3-ready the moment it boots;
+// the code under test only speaks S3 through minio-go.
+const (
+	s3Image    = "minio/minio:RELEASE.2025-09-07T16-13-09Z"
+	s3RootUser = "liteend-test-user"
+	s3RootPass = "liteend-test-pass"
+	s3Bucket   = "uploads"
 )
 
 func TestMain(m *testing.M) {
@@ -49,11 +67,29 @@ func TestMain(m *testing.M) {
 	must(err)
 	rdC, err := tcredis.Run(ctx, "redis:8-alpine")
 	must(err)
+	s3C, err := testcontainers.Run(
+		ctx, s3Image,
+		testcontainers.WithExposedPorts("9000/tcp"),
+		testcontainers.WithEnv(map[string]string{
+			"MINIO_ROOT_USER":     s3RootUser,
+			"MINIO_ROOT_PASSWORD": s3RootPass,
+		}),
+		testcontainers.WithCmd("server", "/data"),
+		testcontainers.WithWaitStrategy(
+			wait.ForHTTP("/minio/health/live").WithPort("9000/tcp").WithStartupTimeout(60*time.Second),
+		),
+	)
+	must(err)
 
 	pgHost, _ := pgC.Host(ctx)
 	pgPort, _ := pgC.MappedPort(ctx, "5432/tcp")
 	rdHost, _ := rdC.Host(ctx)
 	rdPort, _ := rdC.MappedPort(ctx, "6379/tcp")
+	s3Host, _ := s3C.Host(ctx)
+	s3Port, _ := s3C.MappedPort(ctx, "9000/tcp")
+	s3Addr := net.JoinHostPort(s3Host, s3Port.Port())
+	must(createPublicBucket(ctx, s3Addr))
+	publicBaseURL = "http://" + s3Addr + "/" + s3Bucket
 
 	setenv(map[string]string{
 		"PORT":              "4000",
@@ -69,6 +105,15 @@ func TestMain(m *testing.M) {
 		"OIDC_AUDIENCE":     "test",
 		"OIDC_JWKS_URI":     "http://localhost/oidc/jwks",
 		"OIDC_MOCK_ENABLED": "true",
+		// Uploads go to shared object storage, so every replica reads what any
+		// other wrote. S3_ENDPOINT is the address the app uses; S3_PUBLIC_BASE_URL
+		// is the one handed to the browser (here they coincide, in the stack the
+		// public one goes through the proxy).
+		"S3_ENDPOINT":          "http://" + s3Addr,
+		"S3_ACCESS_KEY_ID":     s3RootUser,
+		"S3_SECRET_ACCESS_KEY": s3RootPass,
+		"S3_BUCKET":            s3Bucket,
+		"S3_PUBLIC_BASE_URL":   publicBaseURL,
 		// Explicit allowlist, as in production: it drives both CORS and the
 		// WebSocket handshake authorization. Left empty, every origin is allowed
 		// and the origin checks below would prove nothing.
@@ -88,6 +133,7 @@ func TestMain(m *testing.M) {
 	appInst.Close()
 	_ = pgC.Terminate(ctx)
 	_ = rdC.Terminate(ctx)
+	_ = s3C.Terminate(ctx)
 	os.Exit(code)
 }
 
@@ -135,7 +181,11 @@ func TestGraphQL_AddTestJob(t *testing.T) {
 	require.Equal(t, true, data["addTestJob"])
 }
 
-func TestUploadAndServe(t *testing.T) {
+// TestC5_UploadedFileIsReadableFromObjectStorage pins the replica-independent
+// storage: POST /upload puts the file in the shared bucket and answers with an
+// absolute link into that storage, which anyone fetches without this app in the
+// path — so a file written by one replica is readable by all of them.
+func TestC5_UploadedFileIsReadableFromObjectStorage(t *testing.T) {
 	// minimal PNG
 	png := []byte("\x89PNG\r\n\x1a\nfakepngdata")
 	var buf bytes.Buffer
@@ -155,11 +205,19 @@ func TestUploadAndServe(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&saved))
 	require.Len(t, saved, 1)
 
-	// download it back
-	dl, err := http.Get(server.URL + saved[0]["path"])
+	link := saved[0]["path"]
+	require.True(t, strings.HasPrefix(link, publicBaseURL+"/"),
+		"the link must address the storage, not this app: %q", link)
+	require.NotContains(t, link, server.URL, "the app must not be in the download path")
+
+	// Anonymous download, no credentials and no app involved.
+	dl, err := http.Get(link)
 	require.NoError(t, err)
 	defer dl.Body.Close()
-	require.Equal(t, http.StatusOK, dl.StatusCode)
+	require.Equal(t, http.StatusOK, dl.StatusCode, "the stored object must be publicly readable")
+	body, err := io.ReadAll(dl.Body)
+	require.NoError(t, err)
+	require.Equal(t, png, body, "the object must be byte-identical to the upload")
 }
 
 func TestUpload_RejectsNonImage(t *testing.T) {
@@ -250,6 +308,24 @@ func createImagePart(w *multipart.Writer, field, filename string) (io.Writer, er
 	h["Content-Disposition"] = []string{fmt.Sprintf(`form-data; name="%s"; filename="%s"`, field, filename)}
 	h["Content-Type"] = []string{"image/png"}
 	return w.CreatePart(h)
+}
+
+// createPublicBucket creates the uploads bucket and opens it for anonymous
+// reads — the same state the storage init container leaves behind in the
+// deployed stack, and what makes the handed-out links work in a browser.
+func createPublicBucket(ctx context.Context, addr string) error {
+	cl, err := minio.New(addr, &minio.Options{
+		Creds:  credentials.NewStaticV4(s3RootUser, s3RootPass, ""),
+		Secure: false,
+	})
+	if err != nil {
+		return err
+	}
+	if err := cl.MakeBucket(ctx, s3Bucket, minio.MakeBucketOptions{}); err != nil {
+		return err
+	}
+	return cl.SetBucketPolicy(ctx, s3Bucket, `{"Version":"2012-10-17","Statement":[{"Effect":"Allow",`+
+		`"Principal":{"AWS":["*"]},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::`+s3Bucket+`/*"]}]}`)
 }
 
 func setenv(m map[string]string) {
