@@ -58,10 +58,6 @@ const (
 	// Database tuning.
 	DBConnectTimeout = 10 * time.Second
 	DBIdleTimeout    = 30 * time.Second
-	// DBPoolMax is superseded by Config.DBPoolMax (env DB_POOL_MAX). It stays only
-	// because internal/db/pool.go still reads it; delete it there and here in the
-	// same change.
-	DBPoolMax        = 10
 	DBRetryMaxDelay  = 5 * time.Second
 	DBRetryBaseDelay = 1 * time.Second
 	DBMaxRetries     = 5

@@ -18,16 +18,17 @@ type DB struct {
 	Queries *sqlc.Queries
 }
 
-// New opens a pgx pool, registers custom enum types, and verifies connectivity.
-// It takes no logger: the query tracer logs through logger.From(ctx) so a slow
-// or failed query carries the request_id of whoever caused it.
-func New(ctx context.Context, cfg *config.Config) (*DB, error) {
+// newPoolConfig builds the pool configuration from cfg. It is separate from New
+// so the wiring can be asserted without a live database.
+func newPoolConfig(cfg *config.Config) (*pgxpool.Config, error) {
 	poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL())
 	if err != nil {
 		return nil, fmt.Errorf("parse pool config: %w", err)
 	}
 
-	poolCfg.MaxConns = config.DBPoolMax
+	// Pool size is per replica and set by the operator: replicas x DB_POOL_MAX
+	// must stay below the Postgres connection limit.
+	poolCfg.MaxConns = cfg.DBPoolMax
 	poolCfg.MaxConnIdleTime = config.DBIdleTimeout
 	poolCfg.MaxConnLifetime = config.DBMaxConnLifetime
 	poolCfg.HealthCheckPeriod = config.DBHealthCheckPeriod
@@ -49,6 +50,18 @@ func New(ctx context.Context, cfg *config.Config) (*DB, error) {
 	// Slow/failed queries are the one DB signal worth having in the log; without
 	// it a latency incident has no evidence beyond the request duration.
 	poolCfg.ConnConfig.Tracer = slowQueryTracer{}
+
+	return poolCfg, nil
+}
+
+// New opens a pgx pool, registers custom enum types, and verifies connectivity.
+// It takes no logger: the query tracer logs through logger.From(ctx) so a slow
+// or failed query carries the request_id of whoever caused it.
+func New(ctx context.Context, cfg *config.Config) (*DB, error) {
+	poolCfg, err := newPoolConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
