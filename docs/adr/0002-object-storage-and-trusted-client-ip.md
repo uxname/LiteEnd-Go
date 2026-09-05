@@ -59,11 +59,10 @@ documented `host:port` shape. Everything that needs a client address — the rat
 Three smaller changes belong to the same decision, because a copy is only interchangeable
 if all of them hold: migrations run under a Postgres **advisory lock** (a lock held in the
 database itself), so several copies starting at once on an empty database do not race;
-the pool size of one copy is `DB_POOL_MAX`; and the single `/health` probe is split into
-`/livez` (is the process alive?) and `/readyz` (can this copy take traffic? — the
-dependencies decide that, and only they), so a database blip drains traffic instead of
-restarting the whole fleet. `/health` survives as
-an alias of `/readyz` for deployments that already poll it.
+the pool size of one copy is `DB_POOL_MAX`; and health is reported by two separate
+probes, `/livez` (is the process alive?) and `/readyz` (can this copy take traffic? —
+the dependencies decide that, and only they), so a database blip drains traffic instead
+of restarting the whole fleet.
 
 ## Alternatives
 

@@ -90,7 +90,7 @@ docker compose logs --no-log-prefix app | jq -c 'select(.msg=="http_request")' |
 | Browser CORS error | Origin not allowed | Add the SPA origin to `CORS_ORIGIN` (comma-separated) and restart. |
 | Frontend codegen fails | Backend not running / schema stale | Start backend (`task start:dev`); after schema edits run `task gen` and commit. |
 | Migrations fail / schema drift | Local DB in a bad state | `task db:reset` (destroys local DB), then `task db:migrate`. |
-| `/readyz` (or its alias `/health`) returns 503 | DB/Redis down or heap over threshold | Body names the failing check (db/redis/memory). Ensure `docker compose up -d db redis`. `/livez` stays 200 through all of this on purpose — it only says the process is alive. |
+| `/readyz` returns 503 | DB/Redis down or heap over threshold | Body names the failing check (db/redis/memory). Ensure `docker compose up -d db redis`. `/livez` stays 200 through all of this on purpose — it only says the process is alive. |
 | Upload answers 500; `upload_error` has `reason: "Failed to save metadata"` | Read the `error` field on that line — it names the real cause, either the object storage or Postgres | Storage not running locally: `docker compose up -d garage garage-init` (`task start:dev` does not start it). Otherwise check `S3_ENDPOINT` — that is the address **the app** connects to, not the public `S3_PUBLIC_BASE_URL`. Nothing is half-written: a failure removes the objects already stored. |
 | Upload succeeds but the returned link 404s in the browser | `S3_PUBLIC_BASE_URL` wrong | It must be the prefix **the browser** resolves, bucket name included; the URL is that value + `/` + the object key. |
 | Background job “did nothing” | Job failed/panicked silently | Look for `job_failed` / `job_panic` by `type`/`task_id`; inspect queue state in Asynqmon (`:5300`). To find the request that enqueued it, filter by the job line's `request_id`. |
@@ -100,8 +100,7 @@ docker compose logs --no-log-prefix app | jq -c 'select(.msg=="http_request")' |
 - Liveness: `curl localhost:4000/livez` → `{"status":"ok"}` (process is up; touches
   nothing else — this is what the container HEALTHCHECK probes).
 - Readiness: `curl localhost:4000/readyz` → per-dependency status, 503 if one is
-  unusable — this is what a reverse proxy should gate traffic on. `/health` is an
-  alias of it.
+  unusable — this is what a reverse proxy should gate traffic on.
 - GraphQL IDE: `/playground` (Basic-Auth, dev login `admin`/`admin`).
 - Dashboards (Basic-Auth): pgweb `:5100`, RedisInsight `:5200`, Asynqmon `:5300`.
 - Schema (source of truth): `internal/graph/schema.graphqls` (every field documented).

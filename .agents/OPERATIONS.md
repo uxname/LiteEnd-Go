@@ -52,8 +52,6 @@ Two endpoints, not interchangeable:
 - **`/readyz`** — "can this copy serve traffic?": Postgres, Redis and heap, 503
   when one is unusable. This is what the **reverse proxy** should gate traffic on,
   so a copy with a sick dependency is skipped rather than killed.
-- **`/health`** — an alias of `/readyz`, kept so existing monitoring keeps
-  working. Write `/readyz` in anything new.
 
 ## Deploy
 

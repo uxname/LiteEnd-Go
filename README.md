@@ -89,7 +89,7 @@ Read [AGENTS.md](AGENTS.md) once you want the deeper "why" behind the rules.
 | Area | What it does |
 |---|---|
 | GraphQL | `me`, `updateProfile`, `addTestJob`, admin-only `debug`/`echo`/`testTranslation`, and a `profileUpdated` live subscription (WebSocket) |
-| REST | `POST /upload` (login required, images only, ≤5 MB, ≤10 files; the file goes to object storage and you get its public URL back), plus the probes `GET /livez`, `GET /readyz` and `GET /health` |
+| REST | `POST /upload` (login required, images only, ≤5 MB, ≤10 files; the file goes to object storage and you get its public URL back), plus the probes `GET /livez` and `GET /readyz` |
 | Login | OIDC/JWT checked against the provider's keys (JWKS); creates a profile on first login; roles come from the database; dev mock mode |
 | Jobs | an asynq "test" queue with retries and de-duplication (dashboard: Asynqmon) |
 | Translations | en/ru, chosen by the `Accept-Language` header, English as fallback |
@@ -147,7 +147,7 @@ try `POST /upload`; without it the app starts fine and only the upload fails.
 > password proxy, and the app's own dev pages (`/dev`, `/playground`, `/swagger`,
 > `/openapi.yaml`) ask for the same login. Default: `admin` / `admin`. Change it
 > before using this anywhere real. The public endpoints (`/graphql`, `/upload`,
-> `/livez`, `/readyz`, `/health`) stay open.
+> `/livez`, `/readyz`) stay open.
 
 > **Where data lives.** Nothing is written into the repo. Postgres, Redis and
 > Garage each keep their data in a Docker volume (don't move those into `./data` —
