@@ -37,18 +37,61 @@ services:
     <<: *common-restart-policy
     deploy:
       <<: *app-resources
+    # Config reaches the container two ways — pick per machine:
+    #   1. a .env NEXT TO THIS FILE (the usual local flow): loaded when present;
+    #   2. plain exported environment variables (no-.env machines): the explicit
+    #      mappings below pick them up via interpolation.
+    # Interpolation reads shell vars first, then the project-dir .env, so both
+    # sources feed the same ${VAR}. Only the keys listed below enter the
+    # container — the same rule docker-compose.prod.yml follows.
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
-      # Service names override the .env addresses, which point at the host for
-      # an app started outside docker (`task dev`). S3_ENDPOINT is the storage
-      # address INSIDE this network; S3_PUBLIC_BASE_URL stays as .env has it,
+      # Service names override the configured addresses, which point at the host
+      # for an app started outside docker (`task start:dev`). S3_ENDPOINT is the
+      # storage address INSIDE this network; S3_PUBLIC_BASE_URL is left alone,
       # because that one is resolved by the browser.
-      - DATABASE_HOST=db
-      - REDIS_HOST=redis
-      - S3_ENDPOINT=http://garage:3900
+      DATABASE_HOST: db
+      REDIS_HOST: redis
+      S3_ENDPOINT: http://garage:3900
+      # ":?" marks every variable internal/config declares `required` (plus
+      # CORS_ORIGIN, as in the prod file): a half-configured machine fails at
+      # `docker compose config` naming the variable, instead of crash-looping
+      # the container at boot. Everything else repeats internal/config's own
+      # default, so the two cannot drift — with two deliberate exceptions for
+      # this stand: REDIS_PASSWORD (the app defaults to none, but an empty one
+      # would swallow the next argument of redis-server's command line below)
+      # and OIDC_MOCK_ENABLED (a local stack has no OIDC provider to talk to).
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:?set DATABASE_PASSWORD}
+      OIDC_ISSUER: ${OIDC_ISSUER:?set OIDC_ISSUER}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:?set OIDC_AUDIENCE}
+      OIDC_JWKS_URI: ${OIDC_JWKS_URI:?set OIDC_JWKS_URI}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:?set S3_PUBLIC_BASE_URL (public link prefix the browser resolves)}
+      CORS_ORIGIN: ${CORS_ORIGIN:?set CORS_ORIGIN (comma-separated origins, must include the frontend one)}
+      PORT: ${PORT:-4000}
+      NODE_ENV: ${NODE_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
+      DATABASE_PORT: ${DATABASE_PORT:-5432}
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_NAME: ${DATABASE_NAME:-postgres}
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis}
+      S3_BUCKET: ${S3_BUCKET:-uploads}
+      S3_USE_SSL: ${S3_USE_SSL:-false}
+      OIDC_MOCK_ENABLED: ${OIDC_MOCK_ENABLED:-true}
+      # Host ports of the dashboards — rendered as links on /dev.
+      DB_STUDIO_PORT: ${DB_STUDIO_PORT:-5100}
+      REDIS_STUDIO_PORT: ${REDIS_STUDIO_PORT:-5200}
+      ASYNQMON_PORT: ${ASYNQMON_PORT:-5300}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
     ports:
-      - "127.0.0.1:${PORT}:${PORT}"
+      - "127.0.0.1:${PORT:-4000}:${PORT:-4000}"
     networks:
       - liteend-net
     logging: *common-logging
@@ -68,19 +111,19 @@ services:
     deploy:
       <<: *db-resources
     environment:
-      POSTGRES_USER: ${DATABASE_USER}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
-      POSTGRES_DB: ${DATABASE_NAME}
+      POSTGRES_USER: ${DATABASE_USER:-postgres}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?set DATABASE_PASSWORD}
+      POSTGRES_DB: ${DATABASE_NAME:-postgres}
     volumes:
       - postgres:/var/lib/postgresql
     ports:
-      - "127.0.0.1:${DATABASE_PORT}:${DATABASE_PORT}"
-    command: -p ${DATABASE_PORT}
+      - "127.0.0.1:${DATABASE_PORT:-5432}:${DATABASE_PORT:-5432}"
+    command: -p ${DATABASE_PORT:-5432}
     networks:
       - liteend-net
     logging: *common-logging
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER} -d ${DATABASE_NAME} -p ${DATABASE_PORT}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-postgres} -d ${DATABASE_NAME:-postgres} -p ${DATABASE_PORT:-5432}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -92,16 +135,16 @@ services:
       <<: *small-resources
     command: >
       redis-server --save 20 1 --loglevel warning
-      --requirepass ${REDIS_PASSWORD} --port ${REDIS_PORT}
+      --requirepass ${REDIS_PASSWORD:-redis} --port ${REDIS_PORT:-6379}
     volumes:
       - redis:/data
     ports:
-      - "127.0.0.1:${REDIS_PORT}:${REDIS_PORT}"
+      - "127.0.0.1:${REDIS_PORT:-6379}:${REDIS_PORT:-6379}"
     networks:
       - liteend-net
     logging: *common-logging
     healthcheck:
-      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "${REDIS_PORT}", "-a", "${REDIS_PASSWORD}", "--raw", "ping"]
+      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "${REDIS_PORT:-6379}", "-a", "${REDIS_PASSWORD:-redis}", "--raw", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -154,10 +197,10 @@ services:
       <<: *small-resources
     environment:
       GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef}
-      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
-      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY}
       S3_BUCKET: ${S3_BUCKET:-uploads}
-      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:?set S3_PUBLIC_BASE_URL (public link prefix the browser resolves)}
     configs:
       - source: garage
         target: /etc/garage.toml
@@ -179,9 +222,9 @@ services:
     # compose interpolates this string before the shell ever sees it.
     command:
       - |
-        : "$${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env (see .env.example)}"
-        : "$${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env (see .env.example)}"
-        : "$${S3_PUBLIC_BASE_URL:?set S3_PUBLIC_BASE_URL in .env (see .env.example)}"
+        : "$${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in the environment or .env (see .env.example)}"
+        : "$${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in the environment or .env (see .env.example)}"
+        : "$${S3_PUBLIC_BASE_URL:?set S3_PUBLIC_BASE_URL in the environment or .env (see .env.example)}"
         garage() { /garage-image/garage "$$@"; }
 
         # Layout: give the single node a role, then commit version 1 — the
@@ -191,7 +234,7 @@ services:
           garage layout apply --version 1
         fi
 
-        # The app authenticates with the key pair from .env, so import that
+        # The app authenticates with the configured key pair, so import that
         # exact pair instead of creating a random one nobody configured.
         garage key info "$$S3_ACCESS_KEY_ID" >/dev/null 2>&1 ||
           garage key import --yes -n liteend "$$S3_ACCESS_KEY_ID" "$$S3_SECRET_ACCESS_KEY"
@@ -217,7 +260,7 @@ services:
     deploy:
       <<: *small-resources
     environment:
-      DATABASE_URL: postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@db:${DATABASE_PORT}/${DATABASE_NAME}?sslmode=disable
+      DATABASE_URL: postgres://${DATABASE_USER:-postgres}:${DATABASE_PASSWORD:?set DATABASE_PASSWORD}@db:${DATABASE_PORT:-5432}/${DATABASE_NAME:-postgres}?sslmode=disable
     networks:
       - liteend-net
     logging: *common-logging
@@ -234,8 +277,8 @@ services:
       <<: *small-resources
     environment:
       RI_REDIS_HOST: redis
-      RI_REDIS_PORT: ${REDIS_PORT}
-      RI_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      RI_REDIS_PORT: ${REDIS_PORT:-6379}
+      RI_REDIS_PASSWORD: ${REDIS_PASSWORD:-redis}
       RI_REDIS_ALIAS: liteend
     networks:
       - liteend-net
@@ -253,8 +296,8 @@ services:
     deploy:
       <<: *small-resources
     command:
-      - "--redis-addr=redis:${REDIS_PORT}"
-      - "--redis-password=${REDIS_PASSWORD}"
+      - "--redis-addr=redis:${REDIS_PORT:-6379}"
+      - "--redis-password=${REDIS_PASSWORD:-redis}"
     networks:
       - liteend-net
     logging: *common-logging
@@ -274,16 +317,21 @@ services:
     deploy:
       <<: *small-resources
     environment:
-      ADMIN_USER: ${ADMIN_USER}
-      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      # The dev-only fallback hash lives HERE, not in the Caddyfile: Caddy's own
+      # `{$VAR:default}` fires only when the variable is UNSET, and compose
+      # always sets every key it lists — so an unconfigured machine handed Caddy
+      # an empty password and it refused to start. ":-" covers unset AND empty.
+      # It is the bcrypt of "admin"; "$$" is an escaped "$" for compose.
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-$$2a$$14$$HAt9aLO.T.57BDK8puAjf.H59sFkLvkqhxCtU4sZZgyHiJfHjJATW}
       XDG_CONFIG_HOME: /tmp/caddy/config
       XDG_DATA_HOME: /tmp/caddy/data
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
     ports:
-      - "127.0.0.1:${DB_STUDIO_PORT}:8081"
-      - "127.0.0.1:${REDIS_STUDIO_PORT}:8082"
-      - "127.0.0.1:${ASYNQMON_PORT}:8083"
+      - "127.0.0.1:${DB_STUDIO_PORT:-5100}:8081"
+      - "127.0.0.1:${REDIS_STUDIO_PORT:-5200}:8082"
+      - "127.0.0.1:${ASYNQMON_PORT:-5300}:8083"
     networks:
       - liteend-net
     logging: *common-logging

@@ -87,25 +87,21 @@ tasks:
   compose:check:
     desc: Validate compose files render (schema, interpolation, :? guards)
     cmds:
-      # Dummy values satisfy the prod file's required-var guards, so this is
-      # hermetic (no .env needed). A YAML typo, bad interpolation or a NEW :?
-      # guard without a matching dummy fails here — before any deploy.
-      # The dev compose needs .env BY DESIGN (env_file, DB credentials), so it
-      # is validated only where .env exists — i.e. on every real dev machine.
+      # Dummy values satisfy BOTH files' required-var guards, so this is
+      # hermetic — neither compose file needs a .env any more. A YAML typo, bad
+      # interpolation or a NEW :? guard without a matching dummy fails here —
+      # before any deploy.
       # Skipped entirely when docker is absent, mirroring the secrets task.
       - cmd: |
           if ! command -v docker >/dev/null 2>&1; then
             echo "docker not installed — skipping compose check"
             exit 0
           fi
-          env CORS_ORIGIN=dummy DATABASE_PASSWORD=dummy OIDC_ISSUER=dummy OIDC_AUDIENCE=dummy OIDC_JWKS_URI=dummy \
-            S3_ENDPOINT=dummy S3_ACCESS_KEY_ID=dummy S3_SECRET_ACCESS_KEY=dummy S3_PUBLIC_BASE_URL=dummy \
-            docker compose -f docker-compose.prod.yml config -q
-          if [ -f .env ]; then
-            docker compose -f docker-compose.yml config -q
-          else
-            echo "no .env — skipping dev-compose validation (requires .env by design)"
-          fi
+          for f in docker-compose.prod.yml docker-compose.yml; do
+            env CORS_ORIGIN=dummy DATABASE_PASSWORD=dummy OIDC_ISSUER=dummy OIDC_AUDIENCE=dummy OIDC_JWKS_URI=dummy \
+              S3_ENDPOINT=dummy S3_ACCESS_KEY_ID=dummy S3_SECRET_ACCESS_KEY=dummy S3_PUBLIC_BASE_URL=dummy \
+              docker compose -f "$f" config -q
+          done
 
   secrets:
     desc: Scan the tree for committed secrets (gitleaks; skipped if not installed)

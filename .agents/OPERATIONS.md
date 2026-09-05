@@ -10,7 +10,11 @@
 - If you add a dashboard, put it behind the proxy too.
 
 Credentials: `ADMIN_USER` / `ADMIN_PASSWORD` (Go side) and `ADMIN_PASSWORD_HASH`
-(bcrypt, for Caddy — escape `$` as `$$` in `.env`). Keep all three in sync.
+(bcrypt, for Caddy — escape `$` as `$$` for docker compose). Keep all three in sync.
+Unset, all three fall back to `admin`/`admin`; the hash's dev fallback lives in
+`docker-compose.yml`, not the `Caddyfile`, because Caddy's `{$VAR:default}` only fires for
+an **unset** variable and compose always sets every key it lists — an empty one made Caddy
+refuse to start.
 
 ## Persistent state
 
