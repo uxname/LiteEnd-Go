@@ -1,9 +1,16 @@
-# Production compose — the APP ONLY. Postgres and Redis are NOT here: the
-# production config points DATABASE_HOST/REDIS_HOST at external services
-# (Dokploy native services, managed databases, or another compose project),
-# given either by a .env next to this file OR by plain exported environment
-# variables. Local dev uses docker-compose.yml instead. Full deploy guide: the
-# meta repo's docs/DEPLOY.md.
+# Production compose — the APP ONLY. Postgres, Redis and the object storage are
+# NOT here: the production config points DATABASE_HOST/REDIS_HOST/S3_ENDPOINT at
+# external services (Dokploy native services, managed databases, a Garage or
+# MinIO of your own, or another compose project), given either by a .env next to
+# this file OR by plain exported environment variables. Local dev uses
+# docker-compose.yml instead — that one runs Postgres, Redis and a Garage with
+# its own initializer. Full deploy guide: the meta repo's docs/DEPLOY.md.
+#
+# Runs in as many copies as asked for — `up -d --scale app=N`. Nothing here is
+# per-copy state (no host port, no volume), so the copies differ by container
+# name only. Two numbers to size before raising N: N x DB_POOL_MAX must stay
+# under the database's connection limit, and TRUSTED_PROXY_HOPS must match the
+# number of proxies actually in front of the app.
 #
 # Deliberately no build: block — this file is a deploy artifact. The image must
 # already exist: pulled from a registry, or built first with `task docker:build`
@@ -48,18 +55,29 @@ services:
       OIDC_ISSUER: ${OIDC_ISSUER:?set OIDC_ISSUER}
       OIDC_AUDIENCE: ${OIDC_AUDIENCE:?set OIDC_AUDIENCE}
       OIDC_JWKS_URI: ${OIDC_JWKS_URI:?set OIDC_JWKS_URI}
-      # The container ALWAYS listens on 4000 (mirrors the frontend prod
-      # compose); PORT only selects the HOST side of the mapping below.
+      # Uploaded files live in the object store, the only place every copy can
+      # reach. S3_ENDPOINT is the storage address as the APP sees it (inside the
+      # network); S3_PUBLIC_BASE_URL is the link prefix as the BROWSER sees it
+      # from outside, so the two are never the same value.
+      S3_ENDPOINT: ${S3_ENDPOINT:?set S3_ENDPOINT (storage address reachable from the app)}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:?set S3_PUBLIC_BASE_URL (public link prefix the browser resolves)}
+      S3_BUCKET: ${S3_BUCKET:-uploads}
+      S3_USE_SSL: ${S3_USE_SSL:-false}
+      # Per-copy pool: N copies x this must stay under the database's limit.
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
+      # How many proxies sit in front; the client address is taken that many
+      # entries from the right of X-Forwarded-For.
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
+      # The container ALWAYS listens on 4000 (mirrors the frontend prod compose).
       PORT: 4000
-    # Published on loopback only — a host reverse proxy terminates TLS.
-    ports:
-      - "127.0.0.1:${PORT:-4000}:4000"
-    # Dokploy/Traefik variant: drop the "ports:" block above and join the
-    # external proxy network instead (declare it at the bottom too):
-    # networks:
-    #   - dokploy-network
-    volumes:
-      - uploads:/app/data/uploads
+    # No published host port on purpose: every copy would fight for the same
+    # one, so `up --scale app=N` could never start a second one. The reverse
+    # proxy reaches port 4000 over the shared external network below and
+    # load-balances across the copies by service name.
+    networks:
+      - proxy
     logging:
       driver: "json-file"
       options:
@@ -68,10 +86,11 @@ services:
     # No healthcheck here on purpose: the app's HEALTHCHECK lives in the
     # Dockerfile — one source of truth, honored by any orchestrator.
 
-volumes:
-  uploads: # User-uploaded files (served at /uploads; app uid 65532)
-
-# Dokploy/Traefik variant (see the app service's networks comment):
-# networks:
-#   dokploy-network:
-#     external: true
+# The proxy network is created and joined by the reverse proxy (Caddy, Traefik,
+# Dokploy's dokploy-network, …), not by this file — hence external. Its NAME is
+# a variable so nothing here is tied to one hosting product; set PROXY_NETWORK
+# to whatever the proxy on this host uses.
+networks:
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:-dokploy-network}

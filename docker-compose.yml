@@ -40,12 +40,15 @@ services:
     env_file:
       - .env
     environment:
+      # Service names override the .env addresses, which point at the host for
+      # an app started outside docker (`task dev`). S3_ENDPOINT is the storage
+      # address INSIDE this network; S3_PUBLIC_BASE_URL stays as .env has it,
+      # because that one is resolved by the browser.
       - DATABASE_HOST=db
       - REDIS_HOST=redis
+      - S3_ENDPOINT=http://garage:3900
     ports:
       - "127.0.0.1:${PORT}:${PORT}"
-    volumes:
-      - uploads:/app/data/uploads
     networks:
       - liteend-net
     logging: *common-logging
@@ -54,6 +57,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      garage-init:
+        condition: service_completed_successfully
     # No healthcheck here on purpose: the app's HEALTHCHECK lives in the
     # Dockerfile — one source of truth, honored by plain `docker run` too.
 
@@ -100,6 +105,108 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # S3-compatible object storage for uploaded files. Every replica of the app
+  # writes here, so a file stored by one is readable through all of them.
+  garage:
+    image: dxflrs/garage:v2.1.0
+    <<: *common-restart-policy
+    deploy:
+      <<: *db-resources
+    environment:
+      # Shared secret between the node and the CLI in garage-init. Fake by
+      # design — this stack is loopback-only; generate a real one for anything
+      # else with `openssl rand -hex 32`.
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef}
+    configs:
+      - source: garage
+        target: /etc/garage.toml
+    volumes:
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+    ports:
+      # 3900 = S3 API, the S3_ENDPOINT of an app started outside docker;
+      # 3902 = web endpoint, where the public file links are served from.
+      # Both ports also appear in .env.example — change them together.
+      - "127.0.0.1:3900:3900"
+      - "127.0.0.1:3902:3902"
+    networks:
+      - liteend-net
+    logging: *common-logging
+    healthcheck:
+      # The image is FROM scratch — no shell, so an exec-form check calling the
+      # garage binary itself is all there is.
+      test: ["CMD", "/garage", "status"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot initializer: a fresh Garage has no layout, no access key and no
+  # bucket, and `docker compose up` must not need manual commands. The garage
+  # image carries no shell to script that with, so this runs alpine with the
+  # garage binary mounted straight out of that image (needs Docker Engine 27.4+
+  # for `type: image` mounts). Every step is skipped when it is already there,
+  # so a restart or an `up` on an existing volume is a no-op.
+  garage-init:
+    image: alpine:3.21
+    restart: "no"
+    deploy:
+      <<: *small-resources
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_BUCKET: ${S3_BUCKET:-uploads}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-}
+    configs:
+      - source: garage
+        target: /etc/garage.toml
+    volumes:
+      - type: image
+        source: dxflrs/garage:v2.1.0
+        target: /garage-image
+      # Read-only: the CLI only needs this node's public key from here to
+      # address the node over RPC.
+      - garage-meta:/var/lib/garage/meta:ro
+    networks:
+      - liteend-net
+    logging: *common-logging
+    depends_on:
+      garage:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-euc"]
+    # One list item = one argument = the whole script. "$$" is an escaped "$":
+    # compose interpolates this string before the shell ever sees it.
+    command:
+      - |
+        : "$${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env (see .env.example)}"
+        : "$${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env (see .env.example)}"
+        : "$${S3_PUBLIC_BASE_URL:?set S3_PUBLIC_BASE_URL in .env (see .env.example)}"
+        garage() { /garage-image/garage "$$@"; }
+
+        # Layout: give the single node a role, then commit version 1 — the
+        # first and only layout this cluster ever gets.
+        if garage status | grep -q "NO ROLE ASSIGNED"; then
+          garage layout assign -z dc1 -c 10G "$$(garage node id -q | cut -d@ -f1)"
+          garage layout apply --version 1
+        fi
+
+        # The app authenticates with the key pair from .env, so import that
+        # exact pair instead of creating a random one nobody configured.
+        garage key info "$$S3_ACCESS_KEY_ID" >/dev/null 2>&1 ||
+          garage key import --yes -n liteend "$$S3_ACCESS_KEY_ID" "$$S3_SECRET_ACCESS_KEY"
+        garage bucket info "$$S3_BUCKET" >/dev/null 2>&1 || garage bucket create "$$S3_BUCKET"
+        garage bucket allow --read --write "$$S3_BUCKET" --key "$$S3_ACCESS_KEY_ID"
+
+        # Public read. Garage refuses anonymous requests on the S3 API outright
+        # ("Garage does not support anonymous access yet"), so public links are
+        # served by the web endpoint, which picks the bucket from the Host
+        # header — hence the alias on the host of S3_PUBLIC_BASE_URL, derived
+        # from it here rather than kept in a second variable that could drift.
+        garage bucket website --allow "$$S3_BUCKET"
+        web_host=$$(echo "$$S3_PUBLIC_BASE_URL" | sed -e 's|^[a-zA-Z][a-zA-Z0-9+.-]*://||' -e 's|[:/].*$$||')
+        [ "$$web_host" = "$$S3_BUCKET" ] || garage bucket alias "$$S3_BUCKET" "$$web_host"
+        echo "garage ready: bucket $$S3_BUCKET served publicly as host $$web_host"
 
   # ---- Admin dashboards (internal only; exposed via the auth proxy below) ----
 
@@ -192,4 +299,33 @@ networks:
 volumes:
   postgres: # Postgres data (internal; inspect via pgweb, not raw files)
   redis: # Redis data (internal; inspect via RedisInsight)
-  uploads: # User-uploaded files (served at /uploads; app uid 65532)
+  garage-meta: # Garage cluster metadata and object index
+  garage-data: # Garage object data (the uploaded files themselves)
+
+# Inline so the whole dev stack stays in one file. Garage has no environment
+# variables for these settings — only GARAGE_RPC_SECRET, which the services set.
+configs:
+  garage:
+    content: |
+      metadata_dir = "/var/lib/garage/meta"
+      data_dir = "/var/lib/garage/data"
+      db_engine = "lmdb"
+      # One node keeping one copy of every block: a dev stack, not a cluster.
+      replication_factor = 1
+      rpc_bind_addr = "[::]:3901"
+      # Where garage-init's CLI reaches this node.
+      rpc_public_addr = "garage:3901"
+
+      [s3_api]
+      s3_region = "garage"
+      api_bind_addr = "[::]:3900"
+
+      [s3_web]
+      # Public, unauthenticated reads of the uploaded files: the S3 API above
+      # answers 403 to every anonymous request, so the browser is sent here.
+      # The bucket is chosen by the Host header — either <bucket>.web.garage or,
+      # as garage-init sets it up, the host of S3_PUBLIC_BASE_URL. root_domain
+      # is not optional: Garage refuses to start without it.
+      bind_addr = "[::]:3902"
+      root_domain = ".web.garage"
+      index = "index.html"
