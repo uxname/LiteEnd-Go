@@ -16,6 +16,7 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/stretchr/testify/require"
 
+	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/db/sqlc"
 )
 
@@ -74,7 +75,7 @@ func (f *fakeStore) RemoveObject(_ context.Context, _, key string, _ minio.Remov
 const testPublicURL = "https://cdn.example.test/uploads"
 
 // newSvc builds a Service wired to an in-memory store, the same way New wires
-// the real one. The local root only matters to SafeFileInfo.
+// the real one.
 func newSvc(t *testing.T) (*Service, *fakeStore) {
 	t.Helper()
 	store := &fakeStore{objects: map[string]storedObject{}, removed: nil, putErr: nil, removeErr: nil}
@@ -83,8 +84,6 @@ func newSvc(t *testing.T) (*Service, *fakeStore) {
 		store:     store,
 		bucket:    "uploads",
 		publicURL: testPublicURL,
-		initErr:   nil,
-		uploadDir: t.TempDir(),
 	}, store
 }
 
@@ -150,7 +149,7 @@ func TestC5_UploadIsCommittedToObjectStorage(t *testing.T) {
 
 	require.Equal(t, testPublicURL+"/"+f.key, f.Path, "the link is built from S3_PUBLIC_BASE_URL")
 
-	require.NoDirExists(t, filepath.Join(s.uploadDir, "2020"), "nothing may land on local disk")
+	require.NoDirExists(t, filepath.Join(t.TempDir(), "2020"), "nothing may land on local disk")
 }
 
 // C5: the extension is the only client-controlled part of the key, so whatever
@@ -248,37 +247,31 @@ func TestC5_MetadataFailureRemovesStoredObjects(t *testing.T) {
 	require.Equal(t, []string{f.key}, store.removed, "the stored object must not outlive the failed batch")
 }
 
-// C5: a storage misconfiguration must surface as an error on upload, not as a
-// silently dropped file or a panic.
-func TestC5_ProcessFileFailsWithoutStorage(t *testing.T) {
+// C5: New takes the storage contract from the config the process already
+// validated, so a misconfiguration stops the boot instead of travelling inside
+// the service to the first upload.
+func TestC5_NewUsesTheInjectedStorageConfig(t *testing.T) {
 	t.Parallel()
-	s := &Service{
-		q: &fakeWriter{}, store: nil, bucket: "", publicURL: "",
-		initErr: os.ErrInvalid, uploadDir: t.TempDir(),
-	}
-	f, err := s.ProcessFile(context.Background(), "pic.png", "image/png", strings.NewReader(pngMagic+"data"))
-	require.ErrorIs(t, err, os.ErrInvalid)
-	require.Nil(t, f)
-}
-
-// C5: New reads the storage contract from the environment — the wave that made
-// S3_* required proved that an unread variable is found only at runtime.
-func TestC5_NewReadsStorageConfigFromEnv(t *testing.T) {
-	t.Setenv("DATABASE_PASSWORD", "pw")
-	t.Setenv("OIDC_ISSUER", "http://localhost/oidc")
-	t.Setenv("OIDC_AUDIENCE", "test")
-	t.Setenv("OIDC_JWKS_URI", "http://localhost/oidc/jwks")
-	t.Setenv("S3_ENDPOINT", "http://storage:3900")
-	t.Setenv("S3_ACCESS_KEY_ID", "key")
-	t.Setenv("S3_SECRET_ACCESS_KEY", "secret")
-	t.Setenv("S3_BUCKET", "media")
-	t.Setenv("S3_PUBLIC_BASE_URL", "https://cdn.example.test/media/")
-
-	s := New(&fakeWriter{})
-	require.NoError(t, s.initErr)
+	s, err := New(&config.Config{
+		S3Endpoint:        "http://storage:3900",
+		S3AccessKeyID:     "key",
+		S3SecretAccessKey: "secret",
+		S3Bucket:          "media",
+		S3PublicBaseURL:   "https://cdn.example.test/media",
+	}, &fakeWriter{})
+	require.NoError(t, err)
 	require.NotNil(t, s.store)
 	require.Equal(t, "media", s.bucket)
-	require.Equal(t, "https://cdn.example.test/media", s.publicURL, "the trailing slash is stripped by config.Load")
+	require.Equal(t, "https://cdn.example.test/media", s.publicURL)
+}
+
+// C5: a malformed endpoint is a boot failure, not a runtime surprise — New
+// reports it to the composition root, which refuses to start.
+func TestC5_NewRejectsAMalformedEndpoint(t *testing.T) {
+	t.Parallel()
+	s, err := New(&config.Config{S3Endpoint: "http://host:notaport"}, &fakeWriter{})
+	require.Error(t, err)
+	require.Nil(t, s)
 }
 
 func TestC5_ParseEndpoint(t *testing.T) {
@@ -299,35 +292,4 @@ func TestC5_ParseEndpoint(t *testing.T) {
 		require.Equal(t, c.wantHost, host, "host of %q", c.raw)
 		require.Equal(t, c.wantSecure, secure, "tls of %q", c.raw)
 	}
-}
-
-func TestSafeFileInfo_PathTraversalBlocked(t *testing.T) {
-	t.Parallel()
-	s, _ := newSvc(t)
-	// The path is clamped under the upload root (filepath.Clean), so a host file
-	// is never reachable: the result is an error (Forbidden or NotFound), and the
-	// resolved path — if any — never escapes the root.
-	full, _, err := s.SafeFileInfo("../../../etc/passwd")
-	require.Error(t, err)
-	require.Empty(t, full, "must not resolve to a host path")
-}
-
-func TestSafeFileInfo_NotFound(t *testing.T) {
-	t.Parallel()
-	s, _ := newSvc(t)
-	_, _, err := s.SafeFileInfo("2026/06/13/12-00/missing.png")
-	require.ErrorIs(t, err, ErrNotFound)
-}
-
-func TestSafeFileInfo_Valid(t *testing.T) {
-	t.Parallel()
-	s, _ := newSvc(t)
-	rel := "2026/06/13/12-00/ok.png"
-	require.NoError(t, os.MkdirAll(filepath.Join(s.uploadDir, filepath.Dir(rel)), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(s.uploadDir, rel), []byte(pngMagic), 0o600))
-
-	full, mime, err := s.SafeFileInfo(rel)
-	require.NoError(t, err)
-	require.Equal(t, "image/png", mime)
-	require.True(t, strings.HasPrefix(full, s.uploadDir))
 }

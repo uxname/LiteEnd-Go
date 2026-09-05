@@ -11,10 +11,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,12 +23,6 @@ import (
 	"github.com/uxname/liteend-go/internal/logger"
 )
 
-// ErrForbidden is returned when a path escapes the upload root.
-var ErrForbidden = errors.New("access denied")
-
-// ErrNotFound is returned when a requested file does not exist.
-var ErrNotFound = errors.New("file not found")
-
 // ErrDisallowedMime is returned by ProcessFile when the uploaded content-type is
 // not in the image allowlist. Callers skip such files rather than failing.
 var ErrDisallowedMime = errors.New("disallowed mime type")
@@ -39,8 +30,6 @@ var ErrDisallowedMime = errors.New("disallowed mime type")
 // ErrFileTooLarge is returned by ProcessFile when the uploaded file exceeds
 // UploadMaxFileSize. Nothing is stored before returning.
 var ErrFileTooLarge = errors.New("file too large")
-
-const defaultMime = "application/octet-stream"
 
 // sniffLen is the number of leading bytes inspected for content-based MIME
 // detection (http.DetectContentType only looks at the first 512 bytes).
@@ -78,44 +67,27 @@ type Service struct {
 	store     objectStore
 	bucket    string
 	publicURL string
-	// initErr carries a storage misconfiguration to the first upload that needs
-	// storage: New has no way to report one, so the error travels to the caller
-	// (and from there into the log) instead of being dropped.
-	initErr error
-	// uploadDir is the local root SafeFileInfo resolves request paths against.
-	uploadDir string
 }
 
-// New builds an upload Service backed by the configured object store.
-//
-// The storage settings are read from the environment — the same values the
-// process validated at startup — because the composition root builds this
-// service from the query set alone. A missing variable therefore still stops the
-// boot (config.Load requires it); a malformed endpoint surfaces on first upload.
-func New(q Writer) *Service {
-	wd, _ := os.Getwd()
-	svc := &Service{uploadDir: filepath.Join(wd, "data", "uploads"), q: q}
-
-	cfg, err := config.Load()
-	if err != nil {
-		svc.initErr = fmt.Errorf("load storage config: %w", err)
-		return svc
-	}
-
+// New builds an upload Service backed by the configured object store. A
+// malformed storage endpoint stops the boot here rather than surfacing on the
+// first upload — the composition root is the only place that can still refuse
+// to start.
+func New(cfg *config.Config, q Writer) (*Service, error) {
 	endpoint, secure := parseEndpoint(cfg.S3Endpoint, cfg.S3UseSSL)
 	client, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.S3AccessKeyID, cfg.S3SecretAccessKey, ""),
 		Secure: secure,
 	})
 	if err != nil {
-		svc.initErr = fmt.Errorf("build object storage client: %w", err)
-		return svc
+		return nil, fmt.Errorf("build object storage client: %w", err)
 	}
-
-	svc.store = client
-	svc.bucket = cfg.S3Bucket
-	svc.publicURL = cfg.S3PublicBaseURL
-	return svc
+	return &Service{
+		q:         q,
+		store:     client,
+		bucket:    cfg.S3Bucket,
+		publicURL: cfg.S3PublicBaseURL,
+	}, nil
 }
 
 // parseEndpoint splits the configured storage address into what minio-go wants:
@@ -178,10 +150,6 @@ func (s *Service) ProcessFile(
 	if !AllowedMime(detected) {
 		return nil, ErrDisallowedMime
 	}
-	if s.initErr != nil {
-		return nil, s.initErr
-	}
-
 	// The body is buffered whole: it is capped at UploadMaxFileSize (5 MiB) per
 	// file and at BodyLimit (10 MiB) per request, and PutObject stores a known
 	// size in one atomic PUT instead of a multipart upload. Raising either cap
@@ -335,32 +303,4 @@ func (s *Service) putObject(ctx context.Context, f *SavedFile) error {
 		return fmt.Errorf("put object %q: %w", f.key, err)
 	}
 	return nil
-}
-
-// SafeFileInfo resolves a request path to an absolute file path, rejecting any
-// path that escapes the upload root (path-traversal protection).
-func (s *Service) SafeFileInfo(relativePath string) (fullPath, mimeType string, err error) {
-	root, err := filepath.Abs(s.uploadDir)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve upload root: %w", err)
-	}
-	full := filepath.Join(root, filepath.Clean("/"+relativePath))
-	resolved, err := filepath.Abs(full)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve upload path: %w", err)
-	}
-	if resolved != root && !strings.HasPrefix(resolved, root+string(os.PathSeparator)) {
-		return "", "", ErrForbidden
-	}
-	if _, statErr := os.Stat(resolved); statErr != nil { //nolint:gosec // G703: the check above proves resolved is inside root
-		return "", "", ErrNotFound
-	}
-	return resolved, mimeOf(resolved), nil
-}
-
-func mimeOf(name string) string {
-	if t := mime.TypeByExtension(filepath.Ext(name)); t != "" {
-		return t
-	}
-	return defaultMime
 }

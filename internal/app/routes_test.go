@@ -111,3 +111,24 @@ func TestOpenAPISpecMatchesRoutes(t *testing.T) {
 			"openapi.yaml documents %q but no matching route is registered", sk)
 	}
 }
+
+// C6: uploaded files live in the shared object store and are fetched straight
+// from it, so this app must expose no download route at all. The sync test
+// above only proves the router and the spec agree — they would agree just as
+// happily if both still carried GET /uploads/*, which is why this check names
+// the route instead of comparing the two sides.
+func TestC6_NoUploadDownloadRouteExists(t *testing.T) {
+	t.Parallel()
+	r := chi.NewRouter()
+	mountRoutes(r, testRouteDeps())
+
+	err := chi.Walk(r, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		require.NotContains(t, route, "/uploads",
+			"the app must serve no uploaded files: %s %s is still registered", method, route)
+		return nil
+	})
+	require.NoError(t, err)
+
+	require.NotContains(t, string(devtools.OpenAPISpecBytes()), "/uploads",
+		"openapi.yaml still documents a file-download route")
+}

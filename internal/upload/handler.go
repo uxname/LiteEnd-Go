@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -17,7 +16,7 @@ import (
 	"github.com/uxname/liteend-go/internal/logger"
 )
 
-// Handler exposes the upload/download HTTP endpoints.
+// Handler exposes the upload HTTP endpoint.
 type Handler struct {
 	svc *Service
 }
@@ -25,10 +24,10 @@ type Handler struct {
 // NewHandler builds an upload Handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-// Register mounts the routes. requireAuth wraps POST /upload.
+// Register mounts the routes. requireAuth wraps POST /upload. Stored files are
+// served by the object store itself, so this app exposes no download route.
 func (h *Handler) Register(r chi.Router, requireAuth func(http.Handler) http.Handler) {
 	r.With(requireAuth).Post("/upload", h.upload)
-	r.Get("/uploads/*", h.serve)
 }
 
 func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
@@ -86,7 +85,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.SaveMetadata(r.Context(), saved, ip); err != nil {
-		h.svc.RemoveFiles(saved) // roll back orphaned files when metadata fails
+		h.svc.RemoveFiles(saved) // nothing is stored before this point — just drop the buffers
 		writeErr(r.Context(), w, http.StatusInternalServerError, "Failed to save metadata", err)
 		return
 	}
@@ -99,24 +98,6 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_, _ = w.Write(body)
-}
-
-func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
-	rel := chi.URLParam(r, "*")
-	fullPath, mimeType, err := h.svc.SafeFileInfo(rel)
-	switch {
-	case errors.Is(err, ErrForbidden):
-		writeErr(r.Context(), w, http.StatusForbidden, "Access denied", err)
-		return
-	case errors.Is(err, ErrNotFound):
-		writeErr(r.Context(), w, http.StatusNotFound, "File not found", err)
-		return
-	case err != nil:
-		writeErr(r.Context(), w, http.StatusInternalServerError, "Internal error", err)
-		return
-	}
-	w.Header().Set("Content-Type", mimeType)
-	http.ServeFile(w, r, fullPath)
 }
 
 // writeErr answers the client and records why on the way out. The client-facing
@@ -136,10 +117,14 @@ func writeErr(ctx context.Context, w http.ResponseWriter, code int, msg string, 
 	httperr.Write(w, code, msg)
 }
 
+// clientIP is the address recorded as uploader_ip. It reads RemoteAddr and
+// nothing else: middleware.RealIP has already resolved that against
+// TRUSTED_PROXY_HOPS, so it is the only address here a client cannot choose.
+// This used to prefer the leftmost X-Forwarded-For entry, which let any caller
+// write its own uploader_ip straight into the database. Do not reintroduce a
+// header read here — this is a copy of middleware.ClientIP rather than a call
+// to it only because go-arch-lint forbids domain -> transport imports.
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr

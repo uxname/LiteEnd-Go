@@ -35,20 +35,6 @@ paths:
         "400": { description: Bad request }
         "401": { description: Unauthorized }
 
-  /uploads/{path}:
-    get:
-      summary: Serve an uploaded file
-      parameters:
-        - name: path
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200": { description: File }
-        "403": { description: Forbidden }
-        "404": { description: Not found }
-
 components:
   securitySchemes:
     bearerAuth:

@@ -99,13 +99,17 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 		Log:      log,
 	}
 	gqlHandler := graph.NewHandler(res, authMW, cfg.IsProduction(), cfg.CORSOrigin)
-	uploadH := upload.NewHandler(upload.New(database.Queries))
+	uploadSvc, err := upload.New(cfg, database.Queries)
+	if err != nil {
+		app.Close()
+		return nil, err
+	}
 
 	mountRoutes(srv.Router(), routeDeps{
 		health:     health.New(database, rdb).Handler(),
 		graphql:    gqlHandler,
 		graphqlMW:  []func(http.Handler) http.Handler{translator.Middleware, authMW.Optional},
-		upload:     uploadH,
+		upload:     upload.NewHandler(uploadSvc),
 		uploadAuth: authMW.RequireAuth,
 		devAuth:    appmw.BasicAuth("liteend dev tools", cfg.AdminUser, cfg.AdminPassword),
 		devLinks:   devLinks(cfg),
@@ -133,7 +137,7 @@ type routeDeps struct {
 func mountRoutes(r chi.Router, d routeDeps) {
 	// Public REST endpoints (documented in openapi.yaml).
 	r.Get("/health", d.health.ServeHTTP)
-	d.upload.Register(r, d.uploadAuth) // POST /upload, GET /uploads/*
+	d.upload.Register(r, d.uploadAuth) // POST /upload
 
 	// GraphQL (POST + WS).
 	r.With(d.graphqlMW...).Handle("/graphql", d.graphql)
