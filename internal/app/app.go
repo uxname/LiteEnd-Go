@@ -142,12 +142,9 @@ func mountRoutes(r chi.Router, d routeDeps) {
 	// Liveness and readiness are deliberately different handlers: an orchestrator
 	// restarts a container that fails /livez, so /livez must not depend on the
 	// database, or one database blip would restart every replica at once. /readyz
-	// is what a proxy gates traffic on. /health predates the split and existing
-	// deployments still poll it, so it keeps its old meaning (dependencies
-	// included) instead of silently becoming the weaker probe.
+	// is what a proxy gates traffic on.
 	r.Get("/livez", d.live.ServeHTTP)
 	r.Get("/readyz", d.ready.ServeHTTP)
-	r.Get("/health", d.ready.ServeHTTP)
 	d.upload.Register(r, d.uploadAuth) // POST /upload
 
 	// GraphQL (POST + WS).

@@ -86,8 +86,7 @@ func Live() http.HandlerFunc {
 // when one is not, so a proxy stops routing to this replica.
 //
 // Dependencies decide the verdict, and only they. The heap reading is reported
-// alongside them but never judged — see the comment in the body. app.go serves
-// this same handler at /health, so /health follows this verdict too.
+// alongside them but never judged — see the comment in the body.
 func (c *Checker) Ready() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), config.HealthCheckTimeout)

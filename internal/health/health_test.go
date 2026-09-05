@@ -98,9 +98,8 @@ func TestC9_LiveStaysOKWhileDependenciesAreDown(t *testing.T) {
 // rotation, and since every replica buffers request bodies the same way, one
 // load spike takes them all out at once — a total outage where a slower
 // service would have done. The reading stays in the body as diagnostics, which
-// is what the second half pins: reported, never judged. /health is an alias of
-// this handler (app.go), so it changes with it — deliberate, the image's
-// HEALTHCHECK polls /livez and restarts nothing on this.
+// is what the second half pins: reported, never judged. The image's HEALTHCHECK
+// polls /livez, so nothing here ever restarts a container.
 func TestC9_ReadyIgnoresHeapButFollowsDependencies(t *testing.T) {
 	t.Parallel()
 	hot := func() checkResult { return checkResult{Status: statusError, Error: "heap usage above threshold"} }

@@ -22,13 +22,6 @@ paths:
         "200": { description: Ready }
         "503": { description: Not ready }
 
-  /health:
-    get:
-      summary: Alias of /readyz, kept for deployments that already poll it
-      responses:
-        "200": { description: Ready }
-        "503": { description: Not ready }
-
   /upload:
     post:
       summary: Upload image files

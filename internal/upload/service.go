@@ -228,17 +228,6 @@ func detectMime(head []byte) string {
 	return detected
 }
 
-// RemoveFiles drops the buffered bytes of a batch the caller will not report to
-// the client. It is not a rollback and cannot be one: SaveMetadata is what
-// reaches the object store, and it cleans up after itself. Called before
-// SaveMetadata, nothing is stored yet; called after one failed, the files it
-// already committed stay committed — see SaveMetadata on per-file atomicity.
-func (s *Service) RemoveFiles(files []*SavedFile) {
-	for _, f := range files {
-		f.data = nil
-	}
-}
-
 // removeObject deletes the object of the one file whose row insert failed — the
 // only object a rollback may ever touch, since every earlier file of the batch
 // is already committed with its row. It detaches from ctx first: the failure

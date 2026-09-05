@@ -13,10 +13,10 @@ import (
 
 // C9: the image's HEALTHCHECK runs `server -healthcheck`, and a failed
 // HEALTHCHECK is what makes an orchestrator restart the container. The probe
-// must therefore hit liveness: pointed at readiness (or at /health, which
-// reports the dependencies), a single database blip would fail the healthcheck
-// on every replica at once and restart the whole fleet instead of draining
-// traffic from it.
+// must therefore hit liveness: pointed at readiness — the probe that reports
+// the dependencies — a single database blip would fail the healthcheck on every
+// replica at once and restart the whole fleet instead of draining traffic from
+// it.
 func TestC9_HealthcheckProbesLiveness(t *testing.T) {
 	probed := make(chan string, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

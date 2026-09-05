@@ -15,7 +15,7 @@ const (
 	// HeapThresholdMB is the heap reading above which readiness reports the heap
 	// as elevated. Diagnostics only — it does not affect the readiness verdict.
 	HeapThresholdMB = 150
-	// HealthCheckTimeout bounds the whole /health probe (all dependency pings).
+	// HealthCheckTimeout bounds the whole /readyz probe (all dependency pings).
 	HealthCheckTimeout = 5 * time.Second
 
 	// FallbackRequestID is used when no request id is present.

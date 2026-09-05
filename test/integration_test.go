@@ -137,11 +137,10 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// C9: liveness and readiness are separate endpoints on the assembled app.
-// /health kept its pre-split meaning and still answers as readiness. With the
-// real Postgres and Redis containers up, all three report ok.
+// C9: liveness and readiness are separate endpoints on the assembled app. With
+// the real Postgres and Redis containers up, both report ok.
 func TestHealth(t *testing.T) {
-	for _, path := range []string{"/livez", "/readyz", "/health"} {
+	for _, path := range []string{"/livez", "/readyz"} {
 		resp, err := http.Get(server.URL + path)
 		require.NoError(t, err)
 		body, _ := io.ReadAll(resp.Body)

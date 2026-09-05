@@ -54,7 +54,7 @@ func RateLimit(rdb *redis.Client) func(http.Handler) http.Handler {
 }
 
 func rateKey(r *http.Request) string {
-	ip := ClientIP(r)
+	ip := clientIP(r)
 	p := r.URL.Path
 	if strings.HasPrefix(p, "/upload") || strings.HasPrefix(p, "/graphql") {
 		return "rl:auth:" + ip

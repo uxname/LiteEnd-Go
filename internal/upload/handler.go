@@ -67,12 +67,10 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 			continue // skip non-image parts
 		}
 		if errors.Is(err, ErrFileTooLarge) {
-			h.svc.RemoveFiles(saved)
 			writeErr(r.Context(), w, http.StatusBadRequest, "File too large", err)
 			return
 		}
 		if err != nil {
-			h.svc.RemoveFiles(saved)
 			writeErr(r.Context(), w, http.StatusBadRequest, "Failed to process file", err)
 			return
 		}
@@ -85,12 +83,12 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.SaveMetadata(r.Context(), saved, ip); err != nil {
-		// Not a rollback: SaveMetadata commits per file and has already undone the
-		// one it failed on. Files it committed before that stay stored and
-		// recorded, and the client is still told the batch failed — so a retry
-		// costs a duplicate object, never a broken one. This call only frees the
-		// buffers.
-		h.svc.RemoveFiles(saved)
+		// Nothing to roll back here: SaveMetadata commits per file and has already
+		// undone the one it failed on. Files it committed before that stay stored
+		// and recorded, and the client is still told the batch failed — so a retry
+		// costs a duplicate object, never a broken one. A batch abandoned earlier
+		// than this reached the object store at all (ProcessFile only buffers), so
+		// the failure paths above have nothing to clean up either.
 		writeErr(r.Context(), w, http.StatusInternalServerError, "Failed to save metadata", err)
 		return
 	}
@@ -127,7 +125,7 @@ func writeErr(ctx context.Context, w http.ResponseWriter, code int, msg string, 
 // TRUSTED_PROXY_HOPS, so it is the only address here a client cannot choose.
 // This used to prefer the leftmost X-Forwarded-For entry, which let any caller
 // write its own uploader_ip straight into the database. Do not reintroduce a
-// header read here — this is a copy of middleware.ClientIP rather than a call
+// header read here — this is a copy of middleware.clientIP rather than a call
 // to it only because go-arch-lint forbids domain -> transport imports.
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)

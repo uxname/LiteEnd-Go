@@ -108,7 +108,7 @@ func TestC8_NonIPForwardedEntryFallsBackToSocket(t *testing.T) {
 
 // C8: some requests reach the middleware with a portless RemoteAddr (synthetic
 // requests, health probes). The forwarded address must still win — and still be
-// readable by ClientIP, which is what keys the bucket.
+// readable by clientIP, which is what keys the bucket.
 func TestC8_PortlessRemoteAddrStillResolves(t *testing.T) {
 	t.Parallel()
 	var key string
@@ -168,6 +168,24 @@ func TestC8_ForwardedEntryWithPortResolvesToItsAddress(t *testing.T) {
 			require.Equal(t, "rl:auth:"+tc.want, key, "the port must be stripped off the entry, not send the whole request into the proxy's bucket")
 		})
 	}
+}
+
+// C8: a chain entry may carry a bracketed IPv6 address with NO port ("[::1]"),
+// and that shape passes neither check on its own: the brackets defeat ParseIP
+// and the missing port defeats SplitHostPort. Reading it as garbage falls back
+// to the socket address — the proxy's — which is the one bucket for everyone
+// again.
+func TestC8_BracketedIPv6WithoutPortResolvesToItsAddress(t *testing.T) {
+	t.Parallel()
+	var key string
+	h := RealIP(1)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { key = rateKey(r) }))
+
+	req := httptest.NewRequest(http.MethodGet, "/graphql", nil)
+	req.RemoteAddr = "172.20.0.5:44120"
+	req.Header.Set("X-Forwarded-For", "1.2.3.4, [2001:db8::1]")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	require.Equal(t, "rl:auth:2001:db8::1", key, "the brackets must be stripped off the entry, not make it unparseable")
 }
 
 func TestRealIP_NoHeadersKeepsRemoteAddr(t *testing.T) {

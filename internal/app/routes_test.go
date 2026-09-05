@@ -149,9 +149,7 @@ func (downPinger) Ping(context.Context) error { return errors.New("connection re
 // over dead dependencies are passed in here: /livez has to stay 200 (an
 // orchestrator restarts whatever fails it — one database blip must not restart
 // every replica), while /readyz reports the outage so a proxy drains the
-// replica. /health is checked too: it kept its pre-split meaning, and silently
-// downgrading it to liveness would leave proxies routing to a replica whose
-// database is gone.
+// replica.
 func TestC9_LivenessAndReadinessAreWiredApart(t *testing.T) {
 	t.Parallel()
 	deps := testRouteDeps()
@@ -164,10 +162,31 @@ func TestC9_LivenessAndReadinessAreWiredApart(t *testing.T) {
 	for path, want := range map[string]int{
 		"/livez":  http.StatusOK,
 		"/readyz": http.StatusServiceUnavailable,
-		"/health": http.StatusServiceUnavailable,
 	} {
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		require.Equalf(t, want, rec.Code, "GET %s with database and Redis unreachable", path)
 	}
+}
+
+// C9: the app has exactly two probes — /livez and /readyz — and /health is not
+// one of them. The sync test above only proves the router and the spec agree,
+// and they would agree just as happily if both carried GET /health, which is
+// why this check names the path instead of comparing the two sides. A third
+// route serving the readiness verdict is a second name for one answer: one
+// more thing to keep in step, and one more chance for a proxy to gate traffic
+// on the probe that restarts containers.
+func TestC9_ProbeSurfaceIsLivezAndReadyzOnly(t *testing.T) {
+	t.Parallel()
+	r := chi.NewRouter()
+	mountRoutes(r, testRouteDeps())
+
+	err := chi.Walk(r, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		require.NotEqualf(t, "/health", route, "%s %s is registered again", method, route)
+		return nil
+	})
+	require.NoError(t, err)
+
+	require.NotContains(t, string(devtools.OpenAPISpecBytes()), "/health",
+		"openapi.yaml documents a probe route the app does not serve")
 }

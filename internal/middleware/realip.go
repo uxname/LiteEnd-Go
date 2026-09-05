@@ -25,7 +25,7 @@ func RealIP(trustedHops int) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if ip := forwardedClientIP(r, trustedHops); ip != "" {
-				// Keep RemoteAddr's documented "host:port" shape: ClientIP and
+				// Keep RemoteAddr's documented "host:port" shape: clientIP and
 				// chi's loggers SplitHostPort it, and on failure they fall back
 				// to the raw string — which is how a bare address used to smuggle
 				// a whole forged header in as a rate-limit key.
@@ -40,10 +40,10 @@ func RealIP(trustedHops int) func(http.Handler) http.Handler {
 	}
 }
 
-// ClientIP is the address of the caller, without a port: RemoteAddr after RealIP
+// clientIP is the address of the caller, without a port: RemoteAddr after RealIP
 // has resolved it. Register RealIP before any handler that calls this, or it
 // returns the socket peer (a proxy) instead of the client.
-func ClientIP(r *http.Request) string {
+func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
@@ -86,6 +86,14 @@ func validIP(s string) string {
 	}
 	if host, _, err := net.SplitHostPort(s); err == nil && net.ParseIP(host) != nil {
 		return host
+	}
+	// A bracketed IPv6 address with no port at all ("[::1]") clears neither
+	// check above: the brackets stop ParseIP, the missing port stops
+	// SplitHostPort.
+	if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
+		if host := s[1 : len(s)-1]; net.ParseIP(host) != nil {
+			return host
+		}
 	}
 	return ""
 }

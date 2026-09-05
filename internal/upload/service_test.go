@@ -245,14 +245,15 @@ func TestC5_ProcessFileRejectsOversizedFile(t *testing.T) {
 }
 
 // C5: an abandoned batch cannot orphan an object, because nothing is stored
-// until the batch is committed.
+// until the batch is committed — this is what lets the handler drop a rejected
+// batch on the floor without any cleanup call.
 func TestC5_AbandonedBatchStoresNothing(t *testing.T) {
 	t.Parallel()
 	s, store := newSvc(t)
 	f, err := s.ProcessFile(context.Background(), "pic.png", "image/png", strings.NewReader(pngMagic+"data"))
 	require.NoError(t, err)
+	require.NotEmpty(t, f.key, "the file is buffered and already knows the key it would get")
 
-	s.RemoveFiles([]*SavedFile{f})
 	require.Empty(t, store.objects, "an abandoned upload must leave no object behind")
 	require.Empty(t, store.removed, "and nothing to delete either")
 }
