@@ -4,24 +4,38 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"math/rand/v2"
 	"time"
 
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/lock"
 
 	rootdb "github.com/uxname/liteend-go/db"
 	"github.com/uxname/liteend-go/internal/config"
 )
 
+// lockRetryPeriodSeconds is how often a replica re-probes the advisory lock while
+// another replica migrates. goose's default is 5s; 1s is the library minimum and
+// keeps a cold start of the second replica short. The failure threshold below
+// keeps the total wait at goose's default 5 minutes.
+const (
+	lockRetryPeriodSeconds    = 1
+	lockRetryFailureThreshold = 300
+)
+
 // Migrate applies all pending goose migrations using the embedded migration FS.
 // It retries on transient connection failures (the DB may still be starting).
+//
+// Migrations run under a Postgres session-level advisory lock, so several
+// replicas starting at once on an empty database do not race: exactly one
+// applies the migrations while the others wait and then find nothing to do.
 func Migrate(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
-	goose.SetBaseFS(rootdb.Migrations)
-	goose.SetLogger(gooseLogger{log})
-	if err := goose.SetDialect("postgres"); err != nil {
-		return fmt.Errorf("goose set dialect: %w", err)
+	migrations, err := fs.Sub(rootdb.Migrations, "migrations")
+	if err != nil {
+		return fmt.Errorf("open embedded migrations: %w", err)
 	}
 
 	sqlDB, err := sql.Open("pgx", cfg.DatabaseURL())
@@ -55,10 +69,25 @@ func Migrate(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		return fmt.Errorf("database not reachable for migrations: %w", lastErr)
 	}
 
-	if err := goose.UpContext(ctx, sqlDB, "migrations"); err != nil {
+	locker, err := lock.NewPostgresSessionLocker(
+		lock.WithLockTimeout(lockRetryPeriodSeconds, lockRetryFailureThreshold),
+	)
+	if err != nil {
+		return fmt.Errorf("build migration locker: %w", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations,
+		goose.WithLogger(gooseLogger{log}),
+		goose.WithSessionLocker(locker),
+	)
+	if err != nil {
+		return fmt.Errorf("build migration provider: %w", err)
+	}
+
+	applied, err := provider.Up(ctx)
+	if err != nil {
 		return fmt.Errorf("apply migrations: %w", err)
 	}
-	log.Info("migrations applied")
+	log.Info("migrations applied", "count", len(applied))
 	return nil
 }
 
