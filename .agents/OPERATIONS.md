@@ -49,8 +49,10 @@ Two endpoints, not interchangeable:
   `HEALTHCHECK` (`server -healthcheck`) probes this, because an orchestrator
   *restarts* whatever fails liveness: if it pinged the database, one database blip
   would restart every copy at once.
-- **`/readyz`** — "can this copy serve traffic?": Postgres, Redis and heap, 503
-  when one is unusable. This is what the **reverse proxy** should gate traffic on,
+- **`/readyz`** — "can this copy serve traffic?": Postgres and Redis, 503 when
+  one is unusable. The heap reading rides along in the body as diagnostics and
+  never changes the answer — a load spike would otherwise pull every copy out of
+  rotation at once, and restarting a leaking copy is liveness' job. This is what the **reverse proxy** should gate traffic on,
   so a copy with a sick dependency is skipped rather than killed.
 
 ## Deploy
