@@ -57,7 +57,11 @@ func forwardedClientIP(r *http.Request, trustedHops int) string {
 	if trustedHops <= 0 {
 		return ""
 	}
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+	// Join ALL the header's lines, in the order they arrived: a proxy may append
+	// its entry as a separate line instead of extending the previous one (HAProxy
+	// with "option forwardfor" does), and Header.Get would return only the first
+	// line — the one written entirely by the client.
+	if xff := strings.Join(r.Header.Values("X-Forwarded-For"), ","); xff != "" {
 		entries := strings.Split(xff, ",")
 		i := len(entries) - trustedHops
 		if i < 0 {
@@ -70,10 +74,18 @@ func forwardedClientIP(r *http.Request, trustedHops int) string {
 	return validIP(r.Header.Get("X-Real-IP"))
 }
 
+// validIP is the address in a chain entry, or "" when the entry is not one.
+// Entries usually hold a bare address, but Azure Application Gateway and Front
+// Door append a port ("10.0.0.1:5678", IPv6 bracketed as "[2001:db8::1]:443"),
+// and rejecting those would fall back to the socket address — the proxy's — and
+// key every client in the world to the same rate-limit bucket.
 func validIP(s string) string {
 	s = strings.TrimSpace(s)
-	if net.ParseIP(s) == nil {
-		return ""
+	if net.ParseIP(s) != nil { // bare address, IPv4 or IPv6
+		return s
 	}
-	return s
+	if host, _, err := net.SplitHostPort(s); err == nil && net.ParseIP(host) != nil {
+		return host
+	}
+	return ""
 }

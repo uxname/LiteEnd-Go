@@ -122,6 +122,54 @@ func TestC8_PortlessRemoteAddrStillResolves(t *testing.T) {
 	require.Equal(t, "rl:auth:10.0.0.1", key)
 }
 
+// C8: HAProxy's "option forwardfor" appends its entry as a SECOND
+// X-Forwarded-For line instead of extending the first, and Header.Get reads only
+// the first line — the one the client wrote in full. Every line is part of the
+// same chain, or a client sends one comma-less header and picks its own bucket
+// again.
+func TestC8_RepeatedXForwardedForLinesFormOneChain(t *testing.T) {
+	t.Parallel()
+	var key string
+	h := RealIP(1)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { key = rateKey(r) }))
+
+	req := httptest.NewRequest(http.MethodGet, "/graphql", nil)
+	req.RemoteAddr = "172.20.0.5:44120"            // the proxy's socket address
+	req.Header.Add("X-Forwarded-For", "1.1.1.1")   // the line the client sent
+	req.Header.Add("X-Forwarded-For", "127.0.0.1") // the line our proxy appended
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	require.Equal(t, "rl:auth:127.0.0.1", key, "the trusted entry is the last one across ALL header lines, not the last one of the first line")
+}
+
+// C8: Azure Application Gateway and Front Door append chain entries WITH a port
+// ("10.0.0.1:5678", IPv6 bracketed as "[2001:db8::1]:443"). Refusing to parse
+// those falls back to the socket address — the proxy's — which drops every
+// client on earth into one rate-limit bucket.
+func TestC8_ForwardedEntryWithPortResolvesToItsAddress(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		chain string
+		want  string
+	}{
+		"IPv4 with port": {chain: "1.2.3.4, 10.0.0.1:5678", want: "10.0.0.1"},
+		"IPv6 with port": {chain: "1.2.3.4, [2001:db8::1]:443", want: "2001:db8::1"},
+		"bare IPv6":      {chain: "1.2.3.4, ::1", want: "::1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var key string
+			h := RealIP(1)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { key = rateKey(r) }))
+
+			req := httptest.NewRequest(http.MethodGet, "/graphql", nil)
+			req.RemoteAddr = "172.20.0.5:44120"
+			req.Header.Set("X-Forwarded-For", tc.chain)
+			h.ServeHTTP(httptest.NewRecorder(), req)
+
+			require.Equal(t, "rl:auth:"+tc.want, key, "the port must be stripped off the entry, not send the whole request into the proxy's bucket")
+		})
+	}
+}
+
 func TestRealIP_NoHeadersKeepsRemoteAddr(t *testing.T) {
 	t.Parallel()
 	var got string
