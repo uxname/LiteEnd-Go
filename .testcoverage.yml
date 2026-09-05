@@ -37,14 +37,20 @@ threshold:
 # listed here are governed by `threshold.total` only. Ratchet these UP as
 # coverage grows; never lower one to dodge a finding — add the missing test.
 # Floors below are calibrated a few points under the real numbers from the same
-# run: resolver 96.3, queue 88.8, upload 74.6, auth 72.6, profile 66.7.
+# run: resolver 96.3, queue 88.8, upload 82.2, middleware 85.4, auth 72.6,
+# profile 66.7.
 override:
   - path: ^internal/graph/resolver$
     threshold: 94
   - path: ^internal/queue$
     threshold: 85
   - path: ^internal/upload$
-    threshold: 72
+    threshold: 80
+  # The package that decides which address to believe: whether a caller can pick
+  # its own rate-limit key is settled here. It had no floor at all, so its tests
+  # could have been thinned out without the gate noticing.
+  - path: ^internal/middleware$
+    threshold: 83
   - path: ^internal/profile$
     threshold: 64
   - path: ^internal/auth$
