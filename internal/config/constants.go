@@ -12,7 +12,8 @@ const (
 	// BodyLimit is the maximum accepted request body size (10 MiB).
 	BodyLimit = 10 * 1024 * 1024
 
-	// HeapThresholdMB is the heap usage health threshold in megabytes.
+	// HeapThresholdMB is the heap reading above which readiness reports the heap
+	// as elevated. Diagnostics only — it does not affect the readiness verdict.
 	HeapThresholdMB = 150
 	// HealthCheckTimeout bounds the whole /health probe (all dependency pings).
 	HealthCheckTimeout = 5 * time.Second

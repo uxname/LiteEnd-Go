@@ -90,3 +90,42 @@ func TestC9_LiveStaysOKWhileDependenciesAreDown(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, ready.Code,
 		"readiness must report the same outage liveness ignores")
 }
+
+// C9: /readyz is what gates traffic — the reverse proxy stops routing to a
+// replica that answers 503 — so the verdict must follow the dependencies and
+// nothing else. A heap over the threshold is a process-local heuristic, not a
+// dependency: gating on it pulls a replica that can still serve out of
+// rotation, and since every replica buffers request bodies the same way, one
+// load spike takes them all out at once — a total outage where a slower
+// service would have done. The reading stays in the body as diagnostics, which
+// is what the second half pins: reported, never judged. /health is an alias of
+// this handler (app.go), so it changes with it — deliberate, the image's
+// HEALTHCHECK polls /livez and restarts nothing on this.
+func TestC9_ReadyIgnoresHeapButFollowsDependencies(t *testing.T) {
+	t.Parallel()
+	hot := func() checkResult { return checkResult{Status: statusError, Error: "heap usage above threshold"} }
+
+	up := New(fakePinger{}, fakePinger{})
+	up.heap = hot
+	rec := httptest.NewRecorder()
+	up.Ready().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	require.Equal(t, http.StatusOK, rec.Code, "a hot heap must not take a replica with live dependencies out of rotation")
+
+	var resp response
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, statusOK, resp.Status)
+	require.Equal(t, statusError, resp.Checks["memory"].Status, "the heap reading must stay in the body")
+	require.NotEmpty(t, resp.Checks["memory"].Error, "and keep saying why")
+
+	// Same hot heap, one dead dependency: 503, because that one is a dependency.
+	down := New(fakePinger{err: errors.New("connection refused")}, fakePinger{})
+	down.heap = hot
+	rec = httptest.NewRecorder()
+	down.Ready().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code, "a dead dependency must still drain traffic")
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, statusError, resp.Status)
+	require.Equal(t, statusError, resp.Checks["database"].Status)
+}

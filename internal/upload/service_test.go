@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +35,25 @@ type failingWriter struct{ err error }
 
 func (f *failingWriter) CreateUpload(_ context.Context, _ sqlc.CreateUploadParams) (sqlc.Upload, error) {
 	return sqlc.Upload{}, f.err
+}
+
+// nthFailWriter commits every row but the nth, and remembers the keys it did
+// commit. That is the shape of a partly written batch: some rows are already
+// durable when a later one fails.
+type nthFailWriter struct {
+	failOn    int
+	err       error
+	calls     int
+	committed []string
+}
+
+func (w *nthFailWriter) CreateUpload(_ context.Context, arg sqlc.CreateUploadParams) (sqlc.Upload, error) {
+	w.calls++
+	if w.calls == w.failOn {
+		return sqlc.Upload{}, w.err
+	}
+	w.committed = append(w.committed, arg.Filepath)
+	return sqlc.Upload{ID: int32(w.calls)}, nil
 }
 
 // storedObject is what fakeStore remembers about a PutObject call.
@@ -68,6 +89,10 @@ func (f *fakeStore) RemoveObject(_ context.Context, _, key string, _ minio.Remov
 	if f.removeErr != nil {
 		return f.removeErr
 	}
+	// Drop it from the bucket as well, not just onto the audit list: a test
+	// asking what survived a half-failed batch has to read the same map the
+	// puts land in.
+	delete(f.objects, key)
 	f.removed = append(f.removed, key)
 	return nil
 }
@@ -245,6 +270,49 @@ func TestC5_MetadataFailureRemovesStoredObjects(t *testing.T) {
 	err = s.SaveMetadata(context.Background(), []*SavedFile{f}, "10.0.0.1")
 	require.ErrorIs(t, err, os.ErrPermission)
 	require.Equal(t, []string{f.key}, store.removed, "the stored object must not outlive the failed batch")
+}
+
+// C5: the query layer has no transaction, so atomicity is per file, not per
+// batch — and the code has to match that instead of promising more. A
+// three-file batch whose second row insert fails must leave the first file
+// whole (row AND object), roll back only the object of the file that failed,
+// and never store the third at all. The two failures this rules out are a row
+// pointing at a missing object — data corruption, the batch-wide rollback used
+// to cause exactly this — and an object no row names, a silent leak.
+func TestC5_BatchFailureKeepsCommittedFilesAndRollsBackOnlyTheFailedOne(t *testing.T) {
+	t.Parallel()
+	s, store := newSvc(t)
+	w := &nthFailWriter{failOn: 2, err: os.ErrPermission}
+	s.q = w
+
+	files := make([]*SavedFile, 0, 3)
+	for i := range 3 {
+		f, err := s.ProcessFile(
+			context.Background(), fmt.Sprintf("pic%d.png", i), "image/png", strings.NewReader(pngMagic+"data"),
+		)
+		require.NoError(t, err)
+		files = append(files, f)
+	}
+
+	err := s.SaveMetadata(context.Background(), files, "10.0.0.1")
+	require.ErrorIs(t, err, os.ErrPermission, "a failed row insert must fail the call")
+
+	require.Equal(t, []string{files[0].key}, w.committed, "the batch must stop at the failure")
+	require.Equal(t, 2, w.calls, "the third file must never reach the database")
+
+	// The committed row keeps its object: this is the assertion the old
+	// batch-wide rollback broke.
+	require.Contains(t, store.objects, files[0].key, "a committed row must keep its object")
+	// Only the failed file's object is rolled back, and the third was never put.
+	require.Equal(t, []string{files[1].key}, store.removed, "only the failed file's object may be removed")
+	require.Equal(t, []string{files[0].key}, mapKeys(store.objects), "the bucket holds exactly the committed file")
+}
+
+// mapKeys is the object-store contents as a comparable list.
+func mapKeys(m map[string]storedObject) []string {
+	keys := slices.Collect(maps.Keys(m))
+	slices.Sort(keys)
+	return keys
 }
 
 // C5: New takes the storage contract from the config the process already

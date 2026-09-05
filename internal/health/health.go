@@ -7,6 +7,10 @@
 // answers a failed liveness probe by killing the container — one blip would
 // restart the whole fleet instead of briefly draining traffic. So liveness
 // touches nothing external, and only readiness looks at the dependencies.
+//
+// Readiness, in turn, looks at the dependencies and nothing else. A proxy gates
+// traffic on it, so anything that is not a dependency — the heap reading below
+// — is reported in the body but kept out of the verdict.
 package health
 
 import (
@@ -39,11 +43,16 @@ type Pinger interface {
 type Checker struct {
 	db    Pinger
 	redis Pinger
+	// heap is the heap reading, a field only so a test can put readiness in
+	// front of an over-threshold heap. The alternative — allocating 150 MB for
+	// real — would also inflate the heap every parallel test in this package
+	// reads, so the seam is what keeps that assertion testable at all.
+	heap func() checkResult
 }
 
 // New builds a Checker over the given dependencies.
 func New(db, redis Pinger) *Checker {
-	return &Checker{db: db, redis: redis}
+	return &Checker{db: db, redis: redis, heap: memoryCheck}
 }
 
 type checkResult struct {
@@ -73,19 +82,22 @@ func Live() http.HandlerFunc {
 }
 
 // Ready returns the readiness handler: it reports whether the dependencies this
-// replica serves traffic with (database, Redis, its own heap) are usable, and
-// answers 503 when one is not, so a proxy stops routing to this replica.
+// replica serves traffic with (database, Redis) are usable, and answers 503
+// when one is not, so a proxy stops routing to this replica.
+//
+// Dependencies decide the verdict, and only they. The heap reading is reported
+// alongside them but never judged — see the comment in the body. app.go serves
+// this same handler at /health, so /health follows this verdict too.
 func (c *Checker) Ready() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), config.HealthCheckTimeout)
 		defer cancel()
 
-		// A few quick checks, bounded by the context timeout above. Sequential is
-		// fine here — there's no benefit in adding goroutines for three fast probes.
+		// The dependency checks — every entry here gates traffic. Sequential is
+		// fine: two fast probes, both bounded by the context timeout above.
 		checks := map[string]checkResult{
 			"database": ping(ctx, c.db),
 			"redis":    ping(ctx, c.redis),
-			"memory":   memoryCheck(),
 		}
 
 		ok := true
@@ -95,6 +107,14 @@ func (c *Checker) Ready() http.HandlerFunc {
 				break
 			}
 		}
+
+		// Added after the verdict, on purpose: the heap is diagnostics, not a
+		// dependency. A proxy drops a replica that answers 503 here, so gating on
+		// a process-local heuristic would pull a replica that can still serve out
+		// of rotation — and since every replica buffers request bodies alike, one
+		// load spike would pull all of them at once. Total outage instead of a
+		// slow service. Restarting a leaking replica is liveness' job, not this.
+		checks["memory"] = c.heap()
 
 		resp := response{Status: statusOK, Checks: checks}
 		code := http.StatusOK
@@ -123,6 +143,9 @@ func ping(ctx context.Context, p Pinger) checkResult {
 	return checkResult{Status: statusOK}
 }
 
+// memoryCheck reads the live heap and flags it over the threshold. Its result
+// is diagnostics on the readiness body — an operator looking at why a replica
+// is slow — and does not affect the readiness verdict; see Ready.
 func memoryCheck() checkResult {
 	// runtime/metrics reads counters the runtime already maintains; unlike
 	// runtime.ReadMemStats it never stops the world, which matters on a public
@@ -130,8 +153,8 @@ func memoryCheck() checkResult {
 	sample := []metrics.Sample{{Name: heapMetric}}
 	metrics.Read(sample)
 	if sample[0].Value.Kind() != metrics.KindUint64 {
-		// A Go upgrade dropped the metric: not a reason to fail the probe (and
-		// reading the value of an unsupported metric panics). TestMemoryCheck
+		// A Go upgrade dropped the metric: reading the value of an unsupported
+		// metric panics, so report "ok" and lose the diagnostic. TestMemoryCheck
 		// fails loudly instead.
 		return checkResult{Status: statusOK}
 	}

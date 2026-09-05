@@ -85,7 +85,12 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.SaveMetadata(r.Context(), saved, ip); err != nil {
-		h.svc.RemoveFiles(saved) // nothing is stored before this point — just drop the buffers
+		// Not a rollback: SaveMetadata commits per file and has already undone the
+		// one it failed on. Files it committed before that stay stored and
+		// recorded, and the client is still told the batch failed — so a retry
+		// costs a duplicate object, never a broken one. This call only frees the
+		// buffers.
+		h.svc.RemoveFiles(saved)
 		writeErr(r.Context(), w, http.StatusInternalServerError, "Failed to save metadata", err)
 		return
 	}

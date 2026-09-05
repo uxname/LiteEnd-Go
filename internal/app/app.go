@@ -172,7 +172,7 @@ func devLinks(cfg *config.Config) []devtools.Link {
 	return []devtools.Link{
 		{Title: "GraphQL Playground", Desc: "Explore & run GraphQL queries/subscriptions", URL: "/playground", Icon: "◈"},
 		{Title: "Swagger / OpenAPI", Desc: "REST API reference", URL: "/swagger", Icon: "❡"},
-		{Title: "Readiness", Desc: "DB, Redis & memory (liveness lives at /livez)", URL: "/readyz", Icon: "♥"},
+		{Title: "Readiness", Desc: "DB and Redis decide it; heap is shown, not judged (liveness: /livez)", URL: "/readyz", Icon: "♥"},
 		{Title: "pgweb (DB browser)", Desc: "Browse Postgres tables — Prisma Studio analog", URL: localhostURL(cfg.DBStudioPort), Icon: "⛁"},
 		{Title: "RedisInsight", Desc: "Inspect Redis keys & streams", URL: localhostURL(cfg.RedisStudioPort), Icon: "⚡"},
 		{Title: "Asynqmon (queue dashboard)", Desc: "Background jobs — Bull Board analog", URL: localhostURL(cfg.AsynqmonPort), Icon: "⚙"},

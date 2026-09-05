@@ -125,8 +125,8 @@ func AllowedMime(mimetype string) bool {
 
 // ProcessFile validates a single uploaded file and returns its metadata,
 // including the key and public URL it will get. The bytes are held until
-// SaveMetadata commits the batch, so a request that fails half-way leaves
-// nothing in the bucket to clean up. It returns ErrDisallowedMime if the
+// SaveMetadata stores them, so a request rejected while its parts are still
+// being read leaves nothing in the bucket. It returns ErrDisallowedMime if the
 // content-type is not allowed, and ErrFileTooLarge if the body exceeds
 // UploadMaxFileSize.
 //
@@ -228,53 +228,61 @@ func detectMime(head []byte) string {
 	return detected
 }
 
-// RemoveFiles discards a batch that will not be persisted. Nothing reaches the
-// object store before SaveMetadata, so an abandoned upload leaves no object
-// behind — this only drops the bytes the batch was holding.
+// RemoveFiles drops the buffered bytes of a batch the caller will not report to
+// the client. It is not a rollback and cannot be one: SaveMetadata is what
+// reaches the object store, and it cleans up after itself. Called before
+// SaveMetadata, nothing is stored yet; called after one failed, the files it
+// already committed stay committed — see SaveMetadata on per-file atomicity.
 func (s *Service) RemoveFiles(files []*SavedFile) {
 	for _, f := range files {
 		f.data = nil
 	}
 }
 
-// removeObjects deletes the objects a failed batch already stored. It detaches
-// from ctx first: the failure being cleaned up may be that very cancellation.
-func (s *Service) removeObjects(ctx context.Context, files []*SavedFile) {
-	if len(files) == 0 {
-		return
-	}
+// removeObject deletes the object of the one file whose row insert failed — the
+// only object a rollback may ever touch, since every earlier file of the batch
+// is already committed with its row. It detaches from ctx first: the failure
+// being cleaned up may be that very cancellation.
+func (s *Service) removeObject(ctx context.Context, f *SavedFile) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), config.FileUploadTimeout)
 	defer cancel()
 
-	opts := minio.RemoveObjectOptions{}
-	for _, f := range files {
-		if err := s.store.RemoveObject(ctx, s.bucket, f.key, opts); err != nil {
-			// Left behind, the object is unreferenced but still stored, so its key
-			// has to reach the log — this line is the only trace of it.
-			logger.From(ctx).Warn("upload rollback failed", "key", f.key, "error", err.Error())
-		}
+	if err := s.store.RemoveObject(ctx, s.bucket, f.key, minio.RemoveObjectOptions{}); err != nil {
+		// Left behind, the object is unreferenced but still stored, so its key
+		// has to reach the log — this line is the only trace of it.
+		logger.From(ctx).Warn("upload rollback failed", "key", f.key, "error", err.Error())
 	}
 }
 
-// SaveMetadata commits a validated batch: every file is stored as an object and
-// then recorded in the database. The two move together — if either half fails,
-// the objects this batch wrote are removed again, so a failed upload leaves
-// nothing orphaned in the bucket.
+// SaveMetadata commits a validated batch one file at a time: a file's object is
+// stored and its row inserted before the next file is started.
+//
+// Atomicity is per file, not per batch. The query layer exposes no transaction
+// to span a batch, so this promises only what it can keep: the pair "object +
+// row" is all-or-nothing, and a batch that fails half-way keeps the files it
+// already committed and rolls back just the file it failed on — that object is
+// removed, and the files after it are never stored at all.
+//
+// The invariant is that no failure path leaves a row pointing at a missing
+// object, since that row is unusable and nothing will ever repair it. The
+// mirror image, an object no row names, is cleaned up where it can be — a
+// failed insert removes the object it just wrote — with one residual case: a
+// put reported as failed after the object had landed leaves dead weight under
+// a UUID key nothing refers to. Deleting it would cost every failing upload a
+// second FileUploadTimeout against the storage that just failed, which is a
+// worse trade than the dead weight.
+//
+// The error says how many files did commit: the caller reports the whole batch
+// as failed, so without that count nothing records that some of it is durable.
 func (s *Service) SaveMetadata(ctx context.Context, files []*SavedFile, ip string) error {
 	if len(files) == 0 {
 		return nil
 	}
 
-	stored := make([]*SavedFile, 0, len(files))
-	for _, f := range files {
+	for i, f := range files {
 		if err := s.putObject(ctx, f); err != nil {
-			s.removeObjects(ctx, stored)
-			return err
+			return fmt.Errorf("%w (%d of %d files committed)", err, i, len(files))
 		}
-		stored = append(stored, f)
-	}
-
-	for _, f := range files {
 		if _, err := s.q.CreateUpload(ctx, sqlc.CreateUploadParams{
 			Filepath:         f.key,
 			OriginalFilename: f.originalFilename,
@@ -283,8 +291,8 @@ func (s *Service) SaveMetadata(ctx context.Context, files []*SavedFile, ip strin
 			Mimetype:         f.mimetype,
 			UploaderIp:       ip,
 		}); err != nil {
-			s.removeObjects(ctx, stored)
-			return fmt.Errorf("save upload metadata: %w", err)
+			s.removeObject(ctx, f)
+			return fmt.Errorf("save upload metadata (%d of %d files committed): %w", i, len(files), err)
 		}
 	}
 	logger.From(ctx).Info("files uploaded", "count", len(files))
