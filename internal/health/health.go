@@ -1,11 +1,18 @@
-// Package health implements the GET /health endpoint. It returns
-// {"status":"ok",...} on success to preserve the contract checked by the
-// container healthcheck.
+// Package health implements the two probes an orchestrator asks for: liveness
+// ("is this process running, or should it be restarted?") and readiness ("can
+// this replica take traffic right now?").
+//
+// They are separate on purpose. A liveness probe that pinged the database would
+// fail on every replica the moment the database blinked, and every orchestrator
+// answers a failed liveness probe by killing the container — one blip would
+// restart the whole fleet instead of briefly draining traffic. So liveness
+// touches nothing external, and only readiness looks at the dependencies.
 package health
 
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"runtime/metrics"
 
@@ -23,7 +30,7 @@ const (
 // bytes held by live objects plus dead ones not yet swept.
 const heapMetric = "/memory/classes/heap/objects:bytes"
 
-// Pinger is anything that can report its liveness.
+// Pinger is anything that can report whether it is reachable.
 type Pinger interface {
 	Ping(ctx context.Context) error
 }
@@ -49,8 +56,26 @@ type response struct {
 	Checks map[string]checkResult `json:"checks"`
 }
 
-// Handler returns an http.Handler serving the health report.
-func (c *Checker) Handler() http.HandlerFunc {
+// livePayload is the liveness body, written as a fixed string rather than an
+// encoded struct: answering "the process is running" must not depend on
+// anything that can be unavailable. cmd/server -healthcheck greps it for
+// `"status":"ok"`.
+const livePayload = `{"status":"ok"}`
+
+// Live returns the liveness handler: it reports that the process is running and
+// nothing else. It is a package-level function, not a Checker method, so that
+// the handler has no dependency in reach to start pinging.
+func Live() http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, livePayload)
+	}
+}
+
+// Ready returns the readiness handler: it reports whether the dependencies this
+// replica serves traffic with (database, Redis, its own heap) are usable, and
+// answers 503 when one is not, so a proxy stops routing to this replica.
+func (c *Checker) Ready() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), config.HealthCheckTimeout)
 		defer cancel()
@@ -90,7 +115,7 @@ func ping(ctx context.Context, p Pinger) checkResult {
 	}
 	if err := p.Ping(ctx); err != nil {
 		// Log the real cause server-side; expose only a generic status to the
-		// unauthenticated /health endpoint so raw driver/connection details
+		// unauthenticated readiness endpoint so raw driver/connection details
 		// (which can include credentials) never leak.
 		logger.From(ctx).Warn("health dependency unavailable", "error", err)
 		return checkResult{Status: statusError, Error: "unavailable"}
@@ -101,7 +126,7 @@ func ping(ctx context.Context, p Pinger) checkResult {
 func memoryCheck() checkResult {
 	// runtime/metrics reads counters the runtime already maintains; unlike
 	// runtime.ReadMemStats it never stops the world, which matters on a public
-	// endpoint the container healthcheck polls every few seconds.
+	// endpoint a load balancer polls every few seconds.
 	sample := []metrics.Sample{{Name: heapMetric}}
 	metrics.Read(sample)
 	if sample[0].Value.Kind() != metrics.KindUint64 {

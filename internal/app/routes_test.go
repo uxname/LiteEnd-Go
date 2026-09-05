@@ -1,7 +1,10 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -10,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/uxname/liteend-go/internal/devtools"
+	"github.com/uxname/liteend-go/internal/health"
 	"github.com/uxname/liteend-go/internal/upload"
 )
 
@@ -32,7 +36,8 @@ func testRouteDeps() routeDeps {
 	noop := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 	passthrough := func(next http.Handler) http.Handler { return next }
 	return routeDeps{
-		health:     noop,
+		live:       noop,
+		ready:      noop,
 		graphql:    noop,
 		graphqlMW:  nil,
 		upload:     upload.NewHandler(nil), // svc unused during registration
@@ -131,4 +136,38 @@ func TestC6_NoUploadDownloadRouteExists(t *testing.T) {
 
 	require.NotContains(t, string(devtools.OpenAPISpecBytes()), "/uploads",
 		"openapi.yaml still documents a file-download route")
+}
+
+// downPinger stands in for a dependency that is unreachable — the database blip
+// the liveness/readiness split exists for.
+type downPinger struct{}
+
+func (downPinger) Ping(context.Context) error { return errors.New("connection refused") }
+
+// C9: the two probes must be wired to different handlers. mountRoutes is where
+// that wiring is decided, so a real liveness handler and a readiness checker
+// over dead dependencies are passed in here: /livez has to stay 200 (an
+// orchestrator restarts whatever fails it — one database blip must not restart
+// every replica), while /readyz reports the outage so a proxy drains the
+// replica. /health is checked too: it kept its pre-split meaning, and silently
+// downgrading it to liveness would leave proxies routing to a replica whose
+// database is gone.
+func TestC9_LivenessAndReadinessAreWiredApart(t *testing.T) {
+	t.Parallel()
+	deps := testRouteDeps()
+	deps.live = health.Live()
+	deps.ready = health.New(downPinger{}, downPinger{}).Ready()
+
+	r := chi.NewRouter()
+	mountRoutes(r, deps)
+
+	for path, want := range map[string]int{
+		"/livez":  http.StatusOK,
+		"/readyz": http.StatusServiceUnavailable,
+		"/health": http.StatusServiceUnavailable,
+	} {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equalf(t, want, rec.Code, "GET %s with database and Redis unreachable", path)
+	}
 }

@@ -16,11 +16,11 @@ type fakePinger struct{ err error }
 
 func (f fakePinger) Ping(context.Context) error { return f.err }
 
-func TestHandler_AllUp(t *testing.T) {
+func TestReady_AllUp(t *testing.T) {
 	t.Parallel()
 	c := New(fakePinger{}, fakePinger{})
 	rec := httptest.NewRecorder()
-	c.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	c.Ready().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 
 	require.Equal(t, http.StatusOK, rec.Code)
 
@@ -30,8 +30,6 @@ func TestHandler_AllUp(t *testing.T) {
 	require.Equal(t, statusOK, resp.Checks["database"].Status)
 	require.Equal(t, statusOK, resp.Checks["redis"].Status)
 	require.Equal(t, statusOK, resp.Checks["memory"].Status)
-	// The exact substring cmd/server -healthcheck greps for.
-	require.Contains(t, rec.Body.String(), `"status":"ok"`)
 }
 
 // TestMemoryCheck pins the metric name: an unsupported one would silently
@@ -44,11 +42,11 @@ func TestMemoryCheck(t *testing.T) {
 	require.Equal(t, statusOK, memoryCheck().Status)
 }
 
-func TestHandler_DBDownReturns503(t *testing.T) {
+func TestReady_DBDownReturns503(t *testing.T) {
 	t.Parallel()
 	c := New(fakePinger{err: errors.New("connection refused")}, fakePinger{})
 	rec := httptest.NewRecorder()
-	c.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	c.Ready().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 
@@ -64,4 +62,31 @@ func TestPing_NotConfigured(t *testing.T) {
 	res := ping(context.Background(), nil)
 	require.Equal(t, statusError, res.Status)
 	require.Equal(t, "not configured", res.Error)
+}
+
+// C9: liveness says "the process is running" and nothing else, so it must answer
+// 200 while every dependency is down — that is the whole reason it is a separate
+// probe. An orchestrator restarts a container whose liveness probe fails, so a
+// liveness probe that followed the database would turn one database blip into a
+// restart of every replica at once, while readiness (checked below in the same
+// outage) is what should go red and drain traffic instead.
+func TestC9_LiveStaysOKWhileDependenciesAreDown(t *testing.T) {
+	t.Parallel()
+	down := fakePinger{err: errors.New("connection refused")}
+
+	live := httptest.NewRecorder()
+	Live().ServeHTTP(live, httptest.NewRequest(http.MethodGet, "/livez", nil))
+
+	require.Equal(t, http.StatusOK, live.Code, "liveness must not follow the dependencies")
+	// Exact body: JSONEq pins the shape (no dependency report may creep in),
+	// Contains pins the literal text cmd/server -healthcheck greps for.
+	require.JSONEq(t, `{"status":"ok"}`, live.Body.String())
+	require.Contains(t, live.Body.String(), `"status":"ok"`)
+	require.Equal(t, "application/json", live.Header().Get("Content-Type"))
+
+	ready := httptest.NewRecorder()
+	New(down, down).Ready().ServeHTTP(ready, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	require.Equal(t, http.StatusServiceUnavailable, ready.Code,
+		"readiness must report the same outage liveness ignores")
 }

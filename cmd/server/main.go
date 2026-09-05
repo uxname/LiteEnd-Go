@@ -27,7 +27,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Configuration is read from environment variables / .env (see .env.example).\n\nFlags:\n")
 		flag.PrintDefaults()
 	}
-	healthFlag := flag.Bool("healthcheck", false, "probe /health and exit (for container HEALTHCHECK)")
+	healthFlag := flag.Bool("healthcheck", false, "probe the liveness endpoint and exit (for container HEALTHCHECK)")
 	flag.Parse()
 	if *healthFlag {
 		os.Exit(healthcheck())
@@ -45,7 +45,11 @@ func main() {
 	}
 }
 
-// healthcheck probes the local /health endpoint; returns 0 if status is ok.
+// healthcheck probes the local liveness endpoint; returns 0 if the process
+// answers. It probes liveness and not readiness on purpose: this is what the
+// image's HEALTHCHECK runs, and an orchestrator restarts a container whose
+// healthcheck fails — probing the database here would restart every replica at
+// once over a single database blip. Traffic gating belongs to /readyz.
 func healthcheck() int {
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -53,7 +57,7 @@ func healthcheck() int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	url := fmt.Sprintf("http://127.0.0.1:%s/health", port)
+	url := fmt.Sprintf("http://127.0.0.1:%s/livez", port)
 	//nolint:gosec // G704: fixed loopback probe; port comes from our own env, not user input
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

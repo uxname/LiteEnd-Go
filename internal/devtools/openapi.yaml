@@ -9,12 +9,25 @@ info:
   description: REST endpoints. GraphQL is at /graphql.
 
 paths:
+  /livez:
+    get:
+      summary: Liveness probe — the process is running; no dependency is checked
+      responses:
+        "200": { description: Alive }
+
+  /readyz:
+    get:
+      summary: Readiness probe — database, Redis and heap are usable
+      responses:
+        "200": { description: Ready }
+        "503": { description: Not ready }
+
   /health:
     get:
-      summary: Health check
+      summary: Alias of /readyz, kept for deployments that already poll it
       responses:
-        "200": { description: OK }
-        "503": { description: Unhealthy }
+        "200": { description: Ready }
+        "503": { description: Not ready }
 
   /upload:
     post:

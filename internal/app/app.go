@@ -106,7 +106,8 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	}
 
 	mountRoutes(srv.Router(), routeDeps{
-		health:     health.New(database, rdb).Handler(),
+		live:       health.Live(),
+		ready:      health.New(database, rdb).Ready(),
 		graphql:    gqlHandler,
 		graphqlMW:  []func(http.Handler) http.Handler{translator.Middleware, authMW.Optional},
 		upload:     upload.NewHandler(uploadSvc),
@@ -123,7 +124,8 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 // decouples route topology from dependency wiring, so the route set can be
 // enumerated in a test (against the OpenAPI spec) without live DB/Redis.
 type routeDeps struct {
-	health     http.Handler
+	live       http.Handler
+	ready      http.Handler
 	graphql    http.Handler
 	graphqlMW  []func(http.Handler) http.Handler
 	upload     *upload.Handler
@@ -136,7 +138,16 @@ type routeDeps struct {
 // for the app's route topology (Build and the route-sync test both use it).
 func mountRoutes(r chi.Router, d routeDeps) {
 	// Public REST endpoints (documented in openapi.yaml).
-	r.Get("/health", d.health.ServeHTTP)
+	//
+	// Liveness and readiness are deliberately different handlers: an orchestrator
+	// restarts a container that fails /livez, so /livez must not depend on the
+	// database, or one database blip would restart every replica at once. /readyz
+	// is what a proxy gates traffic on. /health predates the split and existing
+	// deployments still poll it, so it keeps its old meaning (dependencies
+	// included) instead of silently becoming the weaker probe.
+	r.Get("/livez", d.live.ServeHTTP)
+	r.Get("/readyz", d.ready.ServeHTTP)
+	r.Get("/health", d.ready.ServeHTTP)
 	d.upload.Register(r, d.uploadAuth) // POST /upload
 
 	// GraphQL (POST + WS).
@@ -161,7 +172,7 @@ func devLinks(cfg *config.Config) []devtools.Link {
 	return []devtools.Link{
 		{Title: "GraphQL Playground", Desc: "Explore & run GraphQL queries/subscriptions", URL: "/playground", Icon: "◈"},
 		{Title: "Swagger / OpenAPI", Desc: "REST API reference", URL: "/swagger", Icon: "❡"},
-		{Title: "Health", Desc: "Liveness of DB, Redis & memory", URL: "/health", Icon: "♥"},
+		{Title: "Readiness", Desc: "DB, Redis & memory (liveness lives at /livez)", URL: "/readyz", Icon: "♥"},
 		{Title: "pgweb (DB browser)", Desc: "Browse Postgres tables — Prisma Studio analog", URL: localhostURL(cfg.DBStudioPort), Icon: "⛁"},
 		{Title: "RedisInsight", Desc: "Inspect Redis keys & streams", URL: localhostURL(cfg.RedisStudioPort), Icon: "⚡"},
 		{Title: "Asynqmon (queue dashboard)", Desc: "Background jobs — Bull Board analog", URL: localhostURL(cfg.AsynqmonPort), Icon: "⚙"},

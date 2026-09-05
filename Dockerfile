@@ -26,6 +26,9 @@ COPY --from=build /out/server /app/server
 COPY --from=build --chown=65532:65532 /data/uploads /app/data/uploads
 EXPOSE 4000
 # Migrations run programmatically at startup (embedded), so no goose CLI needed.
+# The probe hits liveness (see cmd/server/main.go): a failed HEALTHCHECK makes an
+# orchestrator restart the container, so it must not depend on the database.
+# Traffic gating is the proxy's job, against /readyz.
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=10s \
     CMD ["/app/server", "-healthcheck"]
 ENTRYPOINT ["/app/server"]

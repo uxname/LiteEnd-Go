@@ -137,13 +137,18 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// C9: liveness and readiness are separate endpoints on the assembled app.
+// /health kept its pre-split meaning and still answers as readiness. With the
+// real Postgres and Redis containers up, all three report ok.
 func TestHealth(t *testing.T) {
-	resp, err := http.Get(server.URL + "/health")
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	body, _ := io.ReadAll(resp.Body)
-	require.Contains(t, string(body), `"status":"ok"`)
+	for _, path := range []string{"/livez", "/readyz", "/health"} {
+		resp, err := http.Get(server.URL + path)
+		require.NoError(t, err)
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		require.Equalf(t, http.StatusOK, resp.StatusCode, "GET %s", path)
+		require.Containsf(t, string(body), `"status":"ok"`, "GET %s", path)
+	}
 }
 
 func TestGraphQL_Me(t *testing.T) {
