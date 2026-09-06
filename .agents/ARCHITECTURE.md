@@ -88,6 +88,25 @@ To read logs and triage failures: [../docs/DEBUGGING.md](../docs/DEBUGGING.md).
   field, enum value and input a `"description"` — the schema is self-documenting and
   the descriptions surface in the playground and to agents) → `task gen` →
   implement the resolver stub in `internal/graph/resolver/`.
+- **A list field** (one that returns a *set* of entities — a collection that grows,
+  not a fixed enum/scalar array) → cursor pagination only, in the Relay-connection
+  shape: `things(first: Int, after: String): ThingConnection!`, with
+  `edges { node cursor }` and `pageInfo { hasNextPage endCursor }`. Never an
+  `offset`/`page` argument — rows shift under inserts, so numbered pages skip or repeat
+  entries. The `cursor` (and `endCursor`) is the last row's sort key — for the
+  `SERIAL` ids here, the `id` itself, opaque-encoded — and the client passes it back as
+  `after`. On the DB side that means keyset, not `OFFSET`:
+  `WHERE id > $after ORDER BY id LIMIT $first`.
+
+  ```graphql
+  type ThingConnection { edges: [ThingEdge!]!, pageInfo: PageInfo! }
+  type ThingEdge { node: Thing!, cursor: String! }
+  type PageInfo { hasNextPage: Boolean!, endCursor: String }
+  ```
+
+  The template schema has no such field yet and none is being added — this is a rule for
+  when you add the first one. A fixed array of enums or scalars (like `Profile.roles`) is
+  not a collection and this rule does not apply to it.
 - **A DB query** → add it to `db/queries/*.sql` with a `-- name:` annotation →
   `task gen` → use `database.Queries.<Name>`.
 - **A new enum/array column** → add a migration; if it's an enum, register its type
