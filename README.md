@@ -12,7 +12,7 @@ for the 5-minute orientation before anything else.
 - **What you get:** a GraphQL + REST backend with login (OIDC/JWT), user
   profiles, file uploads, background jobs, translations (en/ru), and health
   checks.
-- **Main tools:** Go 1.26 · [chi](https://github.com/go-chi/chi) (router) ·
+- **Main tools:** Go 1.27 · [chi](https://github.com/go-chi/chi) (router) ·
   [gqlgen](https://gqlgen.com) (GraphQL) · [pgx](https://github.com/jackc/pgx) +
   [sqlc](https://sqlc.dev) (Postgres) · [goose](https://github.com/pressly/goose)
   (migrations) · [asynq](https://github.com/hibiken/asynq) (jobs, on Redis) ·
@@ -23,7 +23,7 @@ for the 5-minute orientation before anything else.
 **To run the project, pick one path:**
 
 ### Path A — App on host, DB in Docker (recommended for development)
-Requires [Go 1.26+](https://go.dev/dl), Docker, and `task` (or `go-task` on Arch).
+Requires [Go 1.27+](https://go.dev/dl), Docker, and `task` (or `go-task` on Arch).
 
 ```bash
 task setup       # one-time: copy .env, hooks, codegen, start DB, run migrations
@@ -99,7 +99,7 @@ Read [AGENTS.md](AGENTS.md) once you want the deeper "why" behind the rules.
 
 You need:
 
-- **Go 1.26+**
+- **Go 1.27+**
 - **Docker** (for `docker compose` and for the integration tests)
 - **Task** (optional but handy) — the command shortcuts below. On Arch it's the
   `go-task` package.
@@ -127,14 +127,14 @@ only way to run that CLI — the image is built `FROM scratch` and has no shell.
 ### Option B — app on your machine, database in Docker (best for coding)
 
 ```bash
-task setup         # copies .env, installs git hooks, generates code, starts DB+Redis, runs migrations
+task setup         # copies .env, installs git hooks, generates code, starts DB+Redis+object store, runs migrations
 task start:dev     # runs the app with auto-reload — restarts on every .go change
 ```
 
 `task start:dev` uses [wgo](https://github.com/bokwoon95/wgo) for auto-reload — save a
-file and the server restarts on its own. It brings up Postgres and Redis but not the
-object store, so run `docker compose up -d garage garage-init` too when you want to
-try `POST /upload`; without it the app starts fine and only the upload fails.
+file and the server restarts on its own. It brings up the full set of dependencies in
+Docker (`docker compose up -d db redis garage garage-init`), so `POST /upload` works
+out of the box.
 
 > **First time? Sanity check.** After `task start:dev` is running, open
 > <http://localhost:4000/readyz> — you should see `"status":"ok"` and every
