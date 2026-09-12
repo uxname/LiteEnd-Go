@@ -99,63 +99,9 @@ Read [AGENTS.md](AGENTS.md) once you want the deeper "why" behind the rules.
 
 ## Before you start
 
-You need:
-
-- **Go 1.27+**
-- **Docker** (for `docker compose` and for the integration tests)
-- **Task** (optional but handy) — the command shortcuts below. On Arch it's the
-  `go-task` package.
-
-## Get it running
-
-### Option A — everything in Docker (simplest)
-
-```bash
-cp .env.example .env
-docker compose up --build
-```
-
-This starts: the app on `:4000`, Postgres on `:5432`, Redis on `:6379`, a
-[Garage](https://garagehq.deuxfleurs.fr) object store for uploaded files (S3 API on
-`:3900`, public file links on `:3902`), and three admin dashboards. Open
-<http://localhost:4000/dev> for a page that links to all of them.
-
-Garage configures itself on the first `up` — a small `garage-init` container writes
-the cluster layout, the access key and the bucket, so there is nothing to run by
-hand afterwards. It needs **Docker Engine 27.4 or newer**: it mounts the Garage
-binary straight out of the Garage image (`type: image`, added in 27.4), which is the
-only way to run that CLI — the image is built `FROM scratch` and has no shell.
-
-### Option B — app on your machine, database in Docker (best for coding)
-
-```bash
-task setup         # copies .env, installs git hooks, generates code, starts DB+Redis+object store, runs migrations
-task start:dev     # runs the app with auto-reload — restarts on every .go change
-```
-
-`task start:dev` uses [wgo](https://github.com/bokwoon95/wgo) for auto-reload — save a
-file and the server restarts on its own. It brings up the full set of dependencies in
-Docker (`docker compose up -d db redis garage garage-init`), so `POST /upload` works
-out of the box.
-
-> **First time? Sanity check.** After `task start:dev` is running, open
-> <http://localhost:4000/readyz> — you should see `"status":"ok"` and every
-> dependency listed as ok. Then open
-> <http://localhost:4000/playground> (login `admin` / `admin`) and run
-> `query { me { id roles } }`. If both work, your setup is good.
-
-> **Logging in to the dashboards.** Every dashboard is protected — there is no
-> anonymous access. The dashboards (pgweb, RedisInsight, Asynqmon) sit behind a
-> password proxy, and the app's own dev pages (`/dev`, `/playground`, `/swagger`,
-> `/openapi.yaml`) ask for the same login. Default: `admin` / `admin`. Change it
-> before using this anywhere real. The public endpoints (`/graphql`, `/upload`,
-> `/livez`, `/readyz`) stay open.
-
-> **Where data lives.** Nothing is written into the repo. Postgres, Redis and
-> Garage each keep their data in a Docker volume (don't move those into `./data` —
-> they're root-owned and would break `go test ./...`). Uploaded files go to Garage,
-> not to the app's own filesystem, which is what lets several copies of the app
-> share them. Browse them at the public link the upload returns.
+- **Go 1.27+** and **Task** (on Arch: the `go-task` package) — for Path A, the app
+  on your host. Path B, everything in Docker, needs neither.
+- **Docker** — for both paths, and for the integration tests.
 
 ## Your first change (a walkthrough)
 
