@@ -26,7 +26,6 @@ tasks:
       - lefthook install || echo "lefthook not installed; run 'go install github.com/evilmartians/lefthook@latest'"
       - task: gen
       - docker compose up -d db redis garage garage-init
-      - task: db:migrate
       - echo "Setup done. Start the app with hot-reload via 'task start:dev'."
 
   start:dev:

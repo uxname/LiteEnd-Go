@@ -26,7 +26,7 @@ for the 5-minute orientation before anything else.
 Requires [Go 1.27+](https://go.dev/dl), Docker, and `task` (or `go-task` on Arch).
 
 ```bash
-task setup       # one-time: copy .env, hooks, codegen, start DB, run migrations
+task setup       # one-time: copy .env, hooks, codegen, start DB
 task start:dev   # hot-reload dev server — rebuilds on every .go change
 ```
 
@@ -46,6 +46,8 @@ Then open <http://localhost:4000/playground> (login: `admin` / `admin`).
   needed. Send header `x-mock-sub: <id>` to act as a specific user.
 - **On Arch Linux:** the `task` runner is the `go-task` package. Run `go-task`
   wherever this file says `task`.
+- **The schema updates itself.** The app applies its own migrations at startup
+  (`internal/app/app.go`), on either path; `task db:migrate` is for doing it by hand.
 
 ## New here? Read this first
 
@@ -206,7 +208,7 @@ Run `task --list` to see them all. The ones you'll use most:
 
 | Command | What it does |
 |---|---|
-| `task setup` | First-time setup (env, hooks, codegen, DB, migrations) |
+| `task setup` | First-time setup (env, hooks, codegen, DB) |
 | `task start:dev` | Run the app with auto-reload (wgo, hot-reload) |
 | `task start:prod` | Run the app without hot-reload |
 | `task gen` | Regenerate code (after editing SQL or the GraphQL schema) |
