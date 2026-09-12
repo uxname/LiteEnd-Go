@@ -17,10 +17,12 @@ components:
   transport:
     in:
       - internal/server
-      - internal/middleware
       - internal/devtools
       - internal/graph
       - internal/graph/**     # generated, model, resolver
+  # middleware is its own component, not part of transport: it must NOT reach into
+  # internal/graph or internal/server, and inside transport it would be allowed to.
+  middleware:     { in: internal/middleware }
   domain:
     in:
       - internal/auth
@@ -51,9 +53,11 @@ deps:
   entrypoint:
     mayDependOn: [composition, transport, domain, infrastructure]
   composition:
-    mayDependOn: [transport, domain, infrastructure]
+    mayDependOn: [transport, middleware, domain, infrastructure]
   transport:
-    mayDependOn: [transport, domain, infrastructure]   # self: graph↔resolver, server→middleware
+    mayDependOn: [transport, middleware, domain, infrastructure]   # self: graph↔resolver; server→middleware
+  middleware:
+    mayDependOn: [domain, infrastructure]               # no transport: no graph, no server
   domain:
     mayDependOn: [domain, infrastructure]               # self: auth uses profile
   infrastructure:

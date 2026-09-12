@@ -38,7 +38,6 @@ linters:
     - dupword
     - exhaustive
     - forbidigo
-    - depguard
     - gochecknoglobals
     - gochecknoinits
     - gocritic
@@ -92,32 +91,6 @@ linters:
       min-complexity: 20
     nestif:
       min-complexity: 5
-    depguard:
-      rules:
-        # Layering: domain/infra packages must not depend on the transport
-        # layer (GraphQL, HTTP server, composition root). Dependencies point
-        # inward only.
-        domain-no-transport:
-          list-mode: lax
-          files:
-            - "**/internal/profile/**"
-            - "**/internal/upload/**"
-            - "**/internal/queue/**"
-            - "**/internal/auth/**"
-            - "**/internal/redis/**"
-            - "**/internal/db/**"
-            - "**/internal/i18n/**"
-            - "**/internal/health/**"
-            - "**/internal/middleware/**"
-            - "**/internal/logger/**"
-            - "**/internal/config/**"
-          deny:
-            - pkg: github.com/uxname/liteend-go/internal/graph
-              desc: domain/infra must not depend on the GraphQL transport layer
-            - pkg: github.com/uxname/liteend-go/internal/server
-              desc: domain/infra must not depend on the HTTP server layer
-            - pkg: github.com/uxname/liteend-go/internal/app
-              desc: domain/infra must not depend on the composition root
 
   exclusions:
     rules:
