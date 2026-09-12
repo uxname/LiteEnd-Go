@@ -158,7 +158,7 @@ Run `task --list` to see them all. The ones you'll use most:
 | `task start:dev` | Run the app with auto-reload (wgo, hot-reload) |
 | `task start:prod` | Run the app without hot-reload |
 | `task gen` | Regenerate code (after editing SQL or the GraphQL schema) |
-| `task check` | Full project gate — codegen, format, tidy, build, lint, vuln, secrets (runs on `pre-commit`) |
+| `task check` | Full project gate — codegen, tidy, lint, arch, deadcode, secrets (runs on `pre-commit`) |
 | `task test` | Run fast unit tests |
 | `task test:all` | Run every test — unit + integration (needs Docker) |
 | `task test:cov` | Every test plus the coverage floors — this is what runs on `pre-push` |

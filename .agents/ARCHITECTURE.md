@@ -15,17 +15,14 @@ interfaces **at the consumer** (`profile.Querier`, `profile.Cache`, `auth.Profil
 
 ## Layering
 
-Enforced by two gates, both inside `task check`:
+Enforced by one gate inside `task check`:
 
 - **go-arch-lint** (`.go-arch-lint.yml` — the source of truth) builds the full
   component graph, catches cross-package method-call/DI edges (deepScan) and import
   cycles. Components: `entrypoint → composition → transport → domain →
-  infrastructure`, plus cross-cutting commons (`config`, `logger`, `version`,
-  `httperr`).
-- **depguard** (`.golangci.yml`) forbids domain/infra packages (`profile`, `upload`,
-  `queue`, `auth`, `redis`, `db`, `i18n`, `health`, `middleware`, `logger`,
-  `config`) from importing the transport layer (`internal/graph`, `internal/server`,
-  `internal/app`).
+  infrastructure`, with `middleware` a component of its own — it may reach domain and
+  infrastructure, never the transport layer — plus cross-cutting commons (`config`,
+  `logger`, `version`, `httperr`, `clientip`) that any layer may import.
 
 When you add an `internal/*` package, place it in the right component in
 `.go-arch-lint.yml`. **Never widen a layer's `mayDependOn` to make a
