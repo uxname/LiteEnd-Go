@@ -3,7 +3,9 @@
 # ---- build stage ----
 FROM golang:1.27-alpine AS build
 WORKDIR /src
-RUN apk add --no-cache git
+# No git here: go.mod has no `replace`, the module path is public, and .git is not in
+# the build context. A derived product with private Go modules (GOPRIVATE, or
+# GOPROXY=direct) needs it back.
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
