@@ -255,7 +255,7 @@ services:
 
   # pgweb: DB browser (Prisma Studio analog).
   db_studio:
-    image: sosedoff/pgweb:latest
+    image: sosedoff/pgweb:0.17.0
     <<: *common-restart-policy
     deploy:
       <<: *small-resources
@@ -271,7 +271,7 @@ services:
   # RedisInsight: official Redis GUI. RI_REDIS_* pre-configures the "liteend"
   # connection (visible after accepting the one-time EULA prompt).
   redis_studio:
-    image: redis/redisinsight:latest
+    image: redis/redisinsight:3.8.0
     <<: *common-restart-policy
     deploy:
       <<: *small-resources
@@ -289,7 +289,7 @@ services:
 
   # Asynqmon: queue dashboard (Bull Board analog).
   asynqmon:
-    image: hibiken/asynqmon:latest
+    image: hibiken/asynqmon:0.7.2
     <<: *common-restart-policy
     # Static Go binary that writes nothing — safe under any numeric non-root uid.
     user: "65532:65532"
