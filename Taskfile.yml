@@ -103,9 +103,14 @@ tasks:
           done
 
   secrets:
-    desc: Scan the tree for committed secrets (gitleaks; skipped if not installed)
+    desc: Scan the STAGED DIFF for secrets — the content of the commit being made (gitleaks; skipped if not installed)
     cmds:
-      - bash -c 'if command -v gitleaks >/dev/null 2>&1; then gitleaks detect --source . -v --no-banner; else echo "gitleaks not installed — skipping secret scan"; fi'
+      - bash -c 'if command -v gitleaks >/dev/null 2>&1; then gitleaks git --staged -v --no-banner .; else echo "gitleaks not installed — skipping secret scan"; fi'
+
+  secrets:history:
+    desc: Scan the whole git history for secrets — catches merge commits and anything committed with --no-verify (runs on pre-push)
+    cmds:
+      - bash -c 'if command -v gitleaks >/dev/null 2>&1; then gitleaks git . -v --no-banner; else echo "gitleaks not installed — skipping secret scan"; fi'
 
   build:
     desc: Build all binaries into ./bin

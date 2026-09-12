@@ -15,3 +15,7 @@ pre-push:
       # All tests — unit + integration (testcontainers, needs Docker) — plus
       # the coverage threshold gate (.testcoverage.yml).
       run: sh -c 'if command -v task >/dev/null 2>&1; then task test:cov; else go-task test:cov; fi'
+    secrets:
+      # The history, which pre-commit cannot see: by now the outgoing commits are
+      # local, so this catches a merge commit and anything made with --no-verify.
+      run: sh -c 'if command -v task >/dev/null 2>&1; then task secrets:history; else go-task secrets:history; fi'
