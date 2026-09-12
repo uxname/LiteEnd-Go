@@ -21,7 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
+	coderws "github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/stretchr/testify/require"
@@ -243,22 +244,22 @@ func TestUpload_RejectsNonImage(t *testing.T) {
 // connect → init → subscribe → trigger updateProfile → receive event.
 func TestSubscription_ProfileUpdated(t *testing.T) {
 	wsURL := "ws" + server.URL[len("http"):] + "/graphql"
-	header := http.Header{"Sec-WebSocket-Protocol": {"graphql-transport-ws"}}
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	opts := &coderws.DialOptions{Subprotocols: []string{"graphql-transport-ws"}}
+	conn, _, err := coderws.Dial(context.Background(), wsURL, opts)
 	require.NoError(t, err)
-	defer conn.Close()
+	defer func() { _ = conn.CloseNow() }()
 
-	send := func(v any) { require.NoError(t, conn.WriteJSON(v)) }
+	send := func(v any) { require.NoError(t, wsjson.Write(context.Background(), conn, v)) }
 	send(map[string]any{"type": "connection_init", "payload": map[string]any{"x-mock-sub": ""}})
 
-	// One deadline covers the whole wait for the ack. gorilla caches the first
-	// read error in Conn.readErr and answers every later read with it, so a
-	// connection that once hit an expired deadline is dead for good — re-arming
-	// the deadline and reading again can only spin on the cached error.
-	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+	// One context covers the whole wait for the ack. A read that runs out of
+	// budget kills the connection, so a per-read deadline re-armed in a retry
+	// loop cannot recover — it only spins on a dead socket.
+	ackCtx, cancelAck := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelAck()
 	for {
 		var msg map[string]any
-		require.NoError(t, conn.ReadJSON(&msg), "waiting for connection_ack")
+		require.NoError(t, wsjson.Read(ackCtx, conn, &msg), "waiting for connection_ack")
 		if msg["type"] == "connection_ack" {
 			break
 		}
@@ -280,11 +281,12 @@ func TestSubscription_ProfileUpdated(t *testing.T) {
 	// expired deadline poisoned Conn.readErr and every later attempt returned that
 	// cached error within microseconds, so the retry loop could never recover.
 	event := make(chan error, 1)
-	require.NoError(t, conn.SetReadDeadline(time.Now().Add(20*time.Second)))
+	eventCtx, cancelEvent := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancelEvent()
 	go func() {
 		for {
 			var msg map[string]any
-			if err := conn.ReadJSON(&msg); err != nil {
+			if err := wsjson.Read(eventCtx, conn, &msg); err != nil {
 				event <- err
 				return
 			}
@@ -390,24 +392,24 @@ func must(err error) {
 func TestWebsocket_OriginAuthorization(t *testing.T) {
 	wsURL := "ws" + server.URL[len("http"):] + "/graphql"
 
-	dial := func(origin string) (*websocket.Conn, *http.Response, error) {
-		header := http.Header{"Sec-WebSocket-Protocol": {"graphql-transport-ws"}}
+	dial := func(origin string) (*coderws.Conn, *http.Response, error) {
+		opts := &coderws.DialOptions{Subprotocols: []string{"graphql-transport-ws"}}
 		if origin != "" {
-			header.Set("Origin", origin)
+			opts.HTTPHeader = http.Header{"Origin": {origin}}
 		}
-		return websocket.DefaultDialer.Dial(wsURL, header)
+		return coderws.Dial(context.Background(), wsURL, opts)
 	}
 
 	t.Run("allowed origin completes the handshake", func(t *testing.T) {
 		conn, _, err := dial("http://localhost:3000")
 		require.NoError(t, err, "the SPA origin is in CORS_ORIGIN and must connect")
-		require.NoError(t, conn.Close())
+		require.NoError(t, conn.Close(coderws.StatusNormalClosure, ""))
 	})
 
 	t.Run("foreign origin is refused", func(t *testing.T) {
 		conn, resp, err := dial("http://evil.example")
 		if conn != nil {
-			_ = conn.Close()
+			_ = conn.CloseNow()
 		}
 		require.Error(t, err, "an origin outside CORS_ORIGIN must not get a socket")
 		require.NotNil(t, resp)
@@ -420,6 +422,6 @@ func TestWebsocket_OriginAuthorization(t *testing.T) {
 	t.Run("absent origin still connects", func(t *testing.T) {
 		conn, _, err := dial("")
 		require.NoError(t, err)
-		require.NoError(t, conn.Close())
+		require.NoError(t, conn.Close(coderws.StatusNormalClosure, ""))
 	})
 }
