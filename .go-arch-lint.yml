@@ -1,8 +1,16 @@
 version: 3
 workdir: .
 
-# Vendor (third-party) imports are governed by golangci-lint (depguard/gosec etc.);
-# go-arch-lint here owns the INTERNAL layering only.
+# go-arch-lint here owns the INTERNAL layering only; third-party imports are left
+# to golangci-lint (gosec etc.) and to `allow.depOnAnyVendor` below.
+#
+# How a package gets its layer — the rule this map is actually built on:
+#   1. A package belongs to what it OWNS, not to what it exposes: `health` and
+#      `i18n` are infrastructure even though they hand out http.Handlers, and
+#      `auth`/`upload` are domain logic with their own HTTP wrapper next to it.
+#   2. That HTTP wrapper stays inside its own package, not in `transport`.
+#   3. A helper both transport and domain need is declared in commonComponents
+#      below and never copied.
 allow:
   depOnAnyVendor: true
 
