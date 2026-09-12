@@ -137,3 +137,92 @@ Storage (`S3_*`) has one trap worth stating: **`S3_ENDPOINT` and
 as the app reaches it from inside the network, the second as the browser resolves
 it from outside, bucket name included. A file's URL is the second value plus `/`
 plus the object key, and that string is what lands in the database.
+
+## The proxy in front of the app
+
+Everything below follows from one fact: `X-Forwarded-For` is an ordinary header the
+caller writes freely, and the rightmost entries are trustworthy **only because a proxy
+put them there**. The app cannot check that — a hop count sees addresses, never who
+wrote which — so the requirement is on the proxy and it is not optional.
+
+### nginx appends nothing unless you tell it to
+
+A bare `proxy_pass` forwards the caller's `X-Forwarded-For` and `X-Real-IP` untouched,
+which is the silent hole above. Two lines close it:
+
+```nginx
+location / {
+    proxy_pass http://backend:4000;
+
+    # $proxy_add_x_forwarded_for = what the caller sent, plus the address the
+    # connection actually came from. That appended entry is the one the app counts
+    # to, so "X-Forwarded-For: 9.9.9.9" arrives as "9.9.9.9, <real address>" and
+    # TRUSTED_PROXY_HOPS=1 reads the real one.
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    # $remote_addr OVERWRITES X-Real-IP, so a forged one cannot survive the hop.
+    proxy_set_header X-Real-IP       $remote_addr;
+
+    proxy_set_header Host $host;
+}
+```
+
+### Caddy replaces instead of appending
+
+Out of the box Caddy **discards** a client-sent `X-Forwarded-For` and writes the peer
+address: one entry, nothing forged, `TRUSTED_PROXY_HOPS=1` correct. Adding
+`trusted_proxies` changes that — for requests from a listed range Caddy keeps what
+arrived and appends, so every trusted hop is one more entry to count. `scale/Caddyfile`
+in the meta-repo sets `trusted_proxies static private_ranges` deliberately, because the
+stand has to push a forged header *through* the proxy to test the counting. That line
+belongs to a loopback stand and nowhere else.
+
+HAProxy writes no `X-Forwarded-For` at all until `option forwardfor` is set. Whatever
+sits in front, check it rather than trust a paragraph.
+
+### Check a live deployment in one request
+
+`LOG_LEVEL=info` (the default) writes an `http_request` line per request, and its
+`remote` field is the address the app settled on:
+
+```bash
+# Through your public entry point. 9.9.9.9 stands in for any address you do not own.
+curl -s -o /dev/null -H 'X-Forwarded-For: 9.9.9.9' https://api.example.com/livez
+docker compose -f docker-compose.prod.yml logs --tail=5 app | grep http_request
+```
+
+| `remote` in that line | Verdict |
+|---|---|
+| your own public address | Correct: the proxy appended and the hop count matches. |
+| `9.9.9.9` | **Broken and exploitable.** The proxy is not appending. Fix the proxy — no hop count repairs this. |
+| the proxy's own address | `TRUSTED_PROXY_HOPS` is too low, so every client shares one bucket. |
+
+The limiter answers from the other end too — its Redis key *is* the address it counted:
+
+```bash
+# rate:rl:<ip>, or rate:rl:auth:<ip> for /graphql and /upload
+redis-cli --scan --pattern 'rate:rl:*'
+```
+
+A `rate:rl:9.9.9.9` key means the forged value bought its own bucket.
+
+### Give the readiness probe more than 5 seconds
+
+`/readyz` pings Postgres and Redis under a 5-second budget of its own
+(`config.HealthCheckTimeout`). A proxy whose probe timeout is shorter cuts the answer
+off mid-flight, so live dependencies are reported unavailable: the copy leaves rotation
+and the log gets a warning per dependency that never failed. Set the proxy's health
+timeout above 5s — `scale/Caddyfile` uses 6s for exactly this reason.
+
+### Known limit: `X-Real-IP` is believed without counting
+
+With **no** `X-Forwarded-For` at all, the app falls back to `X-Real-IP` as long as
+`TRUSTED_PROXY_HOPS >= 1`. That header carries no chain, so there is nothing to count
+and nothing to verify: it is believed on the proxy's word alone. No proxy strips it for
+you — Caddy passes a client-sent `X-Real-IP` through unchanged, and so does nginx with
+a bare `proxy_pass`. On a deployment whose proxy sets neither header, one `X-Real-IP`
+lets a caller pick its own rate-limit key.
+
+The support is deliberate: nginx setups overwhelmingly send exactly this header, and
+refusing it would break the most common deployment there is. Two ways to close it — the
+`proxy_set_header X-Real-IP $remote_addr;` line above, or `TRUSTED_PROXY_HOPS=0`, which
+ignores both headers at the cost of having no proxy in front of the app.
