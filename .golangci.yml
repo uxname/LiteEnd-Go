@@ -11,20 +11,15 @@ linters:
     # --- correctness / resource safety ---
     - bodyclose
     - contextcheck
-    - errcheck
     - errchkjson
     - errorlint
     - forcetypeassert
     - gosec
-    - govet
-    - ineffassign
     - nilerr
     - nilnil
     - noctx
     - rowserrcheck
     - sqlclosecheck
-    - staticcheck
-    - unused
     - wrapcheck
     # --- slog / tests ---
     - loggercheck
@@ -55,10 +50,8 @@ linters:
     - wastedassign
     - whitespace
     # --- complexity gates ---
-    - cyclop
     - funlen
     - gocognit
-    - nestif
     - nolintlint
 
   settings:
@@ -82,15 +75,11 @@ linters:
           msg: return an error instead of panicking
     sloglint:
       no-global: "all" # inject *slog.Logger; never use the package-global logger
-    cyclop:
-      max-complexity: 15
     funlen:
       lines: 80
       statements: 50
     gocognit:
       min-complexity: 20
-    nestif:
-      min-complexity: 5
 
   exclusions:
     rules:

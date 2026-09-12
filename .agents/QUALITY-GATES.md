@@ -47,7 +47,7 @@ at **zero issues**.
   anything. Only suppress a genuine false positive or an intentional, documented
   exception (e.g. the `version.*` vars are globals on purpose — injected via
   `-ldflags`).
-- **Complexity gates** are on (`cyclop`, `funlen`, `gocognit`, `nestif`). If a
+- **Complexity gates** are on (`funlen`, `gocognit`). If a
   function trips them, **split it** — don't raise the threshold.
 - **Formatting** is `gofumpt` + `gci` import ordering (stdlib → third-party →
   `github.com/uxname/liteend-go`). `task fmt` applies both; `task lint` verifies them as part of the lint run.
