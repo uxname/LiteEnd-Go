@@ -7,6 +7,7 @@ lives. Read the file that matches your task — don't read them all.
 > Commands are `task <name>`. On Arch Linux the runner is the `go-task` package
 > (`go-task <name>`). All dev tools are pinned in the `tool` block of `go.mod` and
 > invoked with `go tool <path>` — no separate `go install` needed.
+> A tool version lives in that block and nowhere else — the Taskfile pins nothing.
 
 ## Where to look
 

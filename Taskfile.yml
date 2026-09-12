@@ -3,12 +3,6 @@ version: "3"
 vars:
   BIN: bin
   PKG: github.com/uxname/liteend-go
-  # renovate: datasource=go depName=github.com/fe3dback/go-arch-lint
-  GO_ARCH_LINT_VERSION: v1.18.0
-  # renovate: datasource=go depName=golang.org/x/tools
-  X_TOOLS_VERSION: v0.49.0
-  # renovate: datasource=go depName=github.com/vladopajic/go-test-coverage/v2
-  GO_TEST_COVERAGE_VERSION: v2.19.0
 
 tasks:
   default:
@@ -151,14 +145,14 @@ tasks:
   arch:
     desc: Verify architecture/layering boundaries (go-arch-lint)
     cmds:
-      - go run github.com/fe3dback/go-arch-lint@{{.GO_ARCH_LINT_VERSION}} check
+      - go tool github.com/fe3dback/go-arch-lint check
 
   deadcode:
     desc: Fail if there is unreachable (dead) code anywhere in the program
     cmds:
       # -test treats test files as roots so test-only helpers aren't flagged.
       - cmd: |
-          out=$(go run golang.org/x/tools/cmd/deadcode@{{.X_TOOLS_VERSION}} -test ./...)
+          out=$(go tool golang.org/x/tools/cmd/deadcode -test ./...)
           if [ -n "$out" ]; then echo "$out"; echo "dead code found — remove it or wire it up"; exit 1; fi
 
   fmt:
@@ -203,7 +197,7 @@ tasks:
       # -coverpkg=./... attributes coverage across packages, so integration
       # tests in test/ count toward the packages they exercise (db, server, …).
       - go test -race -count=1 -shuffle=on -tags=integration -coverpkg=./... -coverprofile=coverage.out ./...
-      - go run github.com/vladopajic/go-test-coverage/v2@{{.GO_TEST_COVERAGE_VERSION}} --config=.testcoverage.yml
+      - go tool github.com/vladopajic/go-test-coverage/v2 --config=.testcoverage.yml
 
   db:migrate:
     desc: Apply database migrations with goose (URL built from DATABASE_* in .env)
