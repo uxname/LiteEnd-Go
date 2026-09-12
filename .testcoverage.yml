@@ -30,12 +30,6 @@ exclude:
 threshold:
   total: 78
 
-# Per-package floors = the backend's TDD teeth. Each `override` pins a specific
-# domain/business package above a floor (calibrated a few points below its real
-# coverage), so new logic added there WITHOUT tests drops the package under its
-# floor and fails the gate — it cannot hide in the aggregate total. Packages not
-# listed here are governed by `threshold.total` only. Ratchet these UP as
-# coverage grows; never lower one to dodge a finding — add the missing test.
 # Floors below are calibrated a few points under the real numbers from the same
 # run: resolver 96.3, queue 88.8, upload 82.2, middleware 85.4, auth 72.6,
 # profile 66.7.
