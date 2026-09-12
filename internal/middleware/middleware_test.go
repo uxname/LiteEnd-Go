@@ -108,7 +108,7 @@ func TestC8_NonIPForwardedEntryFallsBackToSocket(t *testing.T) {
 
 // C8: some requests reach the middleware with a portless RemoteAddr (synthetic
 // requests, health probes). The forwarded address must still win — and still be
-// readable by clientIP, which is what keys the bucket.
+// readable by clientip.ClientIP, which is what keys the bucket.
 func TestC8_PortlessRemoteAddrStillResolves(t *testing.T) {
 	t.Parallel()
 	var key string

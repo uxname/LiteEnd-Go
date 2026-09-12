@@ -9,6 +9,7 @@ import (
 	"github.com/go-redis/redis_rate/v10"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/uxname/liteend-go/internal/clientip"
 	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/httperr"
 	"github.com/uxname/liteend-go/internal/logger"
@@ -54,7 +55,7 @@ func RateLimit(rdb *redis.Client) func(http.Handler) http.Handler {
 }
 
 func rateKey(r *http.Request) string {
-	ip := clientIP(r)
+	ip := clientip.ClientIP(r)
 	p := r.URL.Path
 	if strings.HasPrefix(p, "/upload") || strings.HasPrefix(p, "/graphql") {
 		return "rl:auth:" + ip

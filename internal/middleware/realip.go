@@ -25,7 +25,7 @@ func RealIP(trustedHops int) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if ip := forwardedClientIP(r, trustedHops); ip != "" {
-				// Keep RemoteAddr's documented "host:port" shape: clientIP and
+				// Keep RemoteAddr's documented "host:port" shape: clientip.ClientIP and
 				// chi's loggers SplitHostPort it, and on failure they fall back
 				// to the raw string — which is how a bare address used to smuggle
 				// a whole forged header in as a rate-limit key.
@@ -38,17 +38,6 @@ func RealIP(trustedHops int) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-// clientIP is the address of the caller, without a port: RemoteAddr after RealIP
-// has resolved it. Register RealIP before any handler that calls this, or it
-// returns the socket peer (a proxy) instead of the client.
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }
 
 // forwardedClientIP returns the forwarded address that trustedHops proxies vouch

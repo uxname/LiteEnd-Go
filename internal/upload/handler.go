@@ -6,11 +6,11 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/uxname/liteend-go/internal/clientip"
 	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/httperr"
 	"github.com/uxname/liteend-go/internal/logger"
@@ -37,7 +37,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := clientIP(r)
+	ip := clientip.ClientIP(r)
 	saved := make([]*SavedFile, 0, config.UploadMaxFiles)
 	fileCount := 0
 
@@ -118,19 +118,4 @@ func writeErr(ctx context.Context, w http.ResponseWriter, code int, msg string, 
 	}
 	logger.From(ctx).LogAttrs(ctx, level, "upload_error", attrs...)
 	httperr.Write(w, code, msg)
-}
-
-// clientIP is the address recorded as uploader_ip. It reads RemoteAddr and
-// nothing else: middleware.RealIP has already resolved that against
-// TRUSTED_PROXY_HOPS, so it is the only address here a client cannot choose.
-// This used to prefer the leftmost X-Forwarded-For entry, which let any caller
-// write its own uploader_ip straight into the database. Do not reintroduce a
-// header read here — this is a copy of middleware.clientIP rather than a call
-// to it only because go-arch-lint forbids domain -> transport imports.
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }

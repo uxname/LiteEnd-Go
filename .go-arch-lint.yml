@@ -46,12 +46,14 @@ components:
       - internal/i18n
       - internal/health
   # cross-cutting helpers — importable by any layer
+  clientip: { in: internal/clientip }
   config:  { in: internal/config }
   logger:  { in: internal/logger }
   version: { in: internal/version }
   httperr: { in: internal/httperr }
 
 commonComponents:
+  - clientip
   - config
   - logger
   - version
