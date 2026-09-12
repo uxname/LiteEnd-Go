@@ -21,18 +21,21 @@ Run it by hand before committing if you want to fail fast. It fails on:
 4. **Architecture** violations (`task arch` — go-arch-lint: layering, cross-package
    call edges, import cycles).
 5. **Dead code** anywhere in the program (`task deadcode`).
-6. **Vulnerabilities** (`govulncheck`).
-7. **Secrets** (`gitleaks`, **skipped with a warning if gitleaks is absent** — a green
+6. **Secrets** (`gitleaks`, **skipped with a warning if gitleaks is absent** — a green
    run on a machine without it proves nothing).
 
 > `gen:check` regenerates and then diffs the **working tree**, so a legitimate
 > regeneration reads as "stale" until you `git add` it. That is why a codegen-tool
 > bump needs `task gen` → `git add` → `task check`, in that order.
 
-## `task test:cov` — pre-push
+## pre-push — `task test:cov`, `task vuln`, `task secrets:history`
 
 Every test (unit + integration via testcontainers) plus the coverage-threshold gate.
-Needs Docker. Details: [TESTING.md](./TESTING.md).
+Needs Docker. Details: [TESTING.md](./TESTING.md). Plus `govulncheck` (`task vuln`):
+it is the one gate that needs the network and the one whose verdict can change
+without the code changing, so it runs on push rather than on every commit. And
+`task secrets:history` — gitleaks over the whole history, which is the only place a
+merge commit or a `--no-verify` commit can still be caught.
 
 ## Linter rules worth knowing
 

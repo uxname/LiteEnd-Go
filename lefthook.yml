@@ -6,7 +6,7 @@
 pre-commit:
   commands:
     check:
-      # Full check: codegen freshness, tidy, lint, arch, deadcode, vuln, secrets.
+      # Full check: codegen freshness, tidy, lint, arch, deadcode, secrets.
       run: sh -c 'if command -v task >/dev/null 2>&1; then task check; else go-task check; fi'
 
 pre-push:
@@ -19,3 +19,8 @@ pre-push:
       # The history, which pre-commit cannot see: by now the outgoing commits are
       # local, so this catches a merge commit and anything made with --no-verify.
       run: sh -c 'if command -v task >/dev/null 2>&1; then task secrets:history; else go-task secrets:history; fi'
+    vuln:
+      # govulncheck — the only gate that needs the network, and the only one whose
+      # verdict changes without the code changing. On a commit that is a surprise;
+      # on a push it is the right moment.
+      run: sh -c 'if command -v task >/dev/null 2>&1; then task vuln; else go-task vuln; fi'

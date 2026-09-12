@@ -70,7 +70,7 @@ tasks:
       - git diff --exit-code -- internal/db/sqlc internal/graph/generated internal/graph/model/models_gen.go || (echo "Generated code is stale — run 'task gen' and commit" && exit 1)
 
   check:
-    desc: Full project check (codegen, tidy, lint, arch, deadcode, vuln, secrets) — run before committing
+    desc: Full project check (codegen, tidy, lint, arch, deadcode, secrets) — run before committing
     cmds:
       - task: gen:check
       - task: tidy:check
@@ -78,7 +78,6 @@ tasks:
       - task: lint
       - task: arch
       - task: deadcode
-      - task: vuln
       - task: secrets
 
   compose:check:
