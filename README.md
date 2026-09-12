@@ -199,22 +199,10 @@ All settings come from environment variables (see `.env.example`). The important
 | `DB_POOL_MAX` | database connections **one copy** may open (default 10) — see below |
 | `TRUSTED_PROXY_HOPS` | how many reverse proxies stand in front of the app (default 1) — see below |
 
-Two of those matter as soon as you run more than one copy of the app:
-
-- **`DB_POOL_MAX`** is per copy, and they all share one database. The rule:
-  replicas x `DB_POOL_MAX` must stay below the Postgres `max_connections` limit
-  (default 100), with room left for migrations, `psql` and the dashboards.
-- **`TRUSTED_PROXY_HOPS`** decides which address the rate limiter counts against.
-  The address is read that many entries from the **right** of `X-Forwarded-For`,
-  because a proxy that appends to that header leaves everything further left as
-  whatever the caller typed. Your proxy has to actually append — one forwarding the
-  request untouched adds nothing, and then the rightmost entry is the caller's;
-  `docs/DEPLOY.md` has the settings and a way to check. Set it to the number of proxies you really run (`0` = none, and
-  then the forwarding headers are ignored). Guess too high and a caller can pad the
-  header to choose its own address; too low and every client shares one bucket.
-
-The meta-repo's `docs/DEPLOY.md` walks through both, plus the network effects, in
-"Running more than one copy".
+Both of the last two need a value that matches how you deploy. The sizing rules, and
+what goes wrong at each end of the range, are in
+[`.agents/OPERATIONS.md`](./.agents/OPERATIONS.md); the meta-repo's `docs/DEPLOY.md`
+walks the deployment itself.
 
 ## The API
 
