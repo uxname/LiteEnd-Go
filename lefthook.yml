@@ -6,7 +6,7 @@
 pre-commit:
   commands:
     check:
-      # Full check: codegen freshness, format, tidy, build, lint, vuln, secrets.
+      # Full check: codegen freshness, tidy, lint, arch, deadcode, vuln, secrets.
       run: sh -c 'if command -v task >/dev/null 2>&1; then task check; else go-task check; fi'
 
 pre-push:

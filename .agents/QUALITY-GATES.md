@@ -9,7 +9,7 @@ Because the hooks *are* the guarantee, `--no-verify` has no safety net behind it
 Don't use it.
 
 > Note: the backend's hooks are installed by `task setup`. A clone where someone only
-> ran `go build` has **no** gates at all.
+> compiled the project has **no** gates at all.
 
 ## `task check` — pre-commit
 
@@ -17,14 +17,12 @@ Run it by hand before committing if you want to fail fast. It fails on:
 
 1. **Stale generated code** (`task gen:check` — sqlc/gqlgen out of sync).
 2. **`go.mod`/`go.sum` not tidy** (`task tidy:check`).
-3. **Formatting** not gofumpt-clean (`task fmt:check`).
-4. **Build** errors (`go build ./...`).
-5. **Lint** issues (`golangci-lint`, includes `gci` import ordering).
-6. **Architecture** violations (`task arch` — go-arch-lint: layering, cross-package
+3. **Lint** issues (`golangci-lint`, includes `gci` import ordering).
+4. **Architecture** violations (`task arch` — go-arch-lint: layering, cross-package
    call edges, import cycles).
-7. **Dead code** anywhere in the program (`task deadcode`).
-8. **Vulnerabilities** (`govulncheck`).
-9. **Secrets** (`gitleaks`, **skipped with a warning if gitleaks is absent** — a green
+5. **Dead code** anywhere in the program (`task deadcode`).
+6. **Vulnerabilities** (`govulncheck`).
+7. **Secrets** (`gitleaks`, **skipped with a warning if gitleaks is absent** — a green
    run on a machine without it proves nothing).
 
 > `gen:check` regenerates and then diffs the **working tree**, so a legitimate
@@ -49,7 +47,7 @@ at **zero issues**.
 - **Complexity gates** are on (`cyclop`, `funlen`, `gocognit`, `nestif`). If a
   function trips them, **split it** — don't raise the threshold.
 - **Formatting** is `gofumpt` + `gci` import ordering (stdlib → third-party →
-  `github.com/uxname/liteend-go`). `task fmt` applies both; `task check` verifies.
+  `github.com/uxname/liteend-go`). `task fmt` applies both; `task lint` verifies them as part of the lint run.
 
 ## Definition of done — read before claiming a change is finished
 
