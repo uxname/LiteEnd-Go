@@ -79,6 +79,25 @@ Three rules keep the log usable when something breaks:
 
 To read logs and triage failures: [../docs/DEBUGGING.md](../docs/DEBUGGING.md).
 
+## Subscriptions are a notification, not a delivery guarantee
+
+`internal/profile/pubsub.go` fans profile events out over Redis pub/sub, so a
+subscriber connected to **any** copy of the backend hears an event published by
+**any other** copy. What it does not do — and what Redis pub/sub cannot do — is
+promise the event arrives.
+
+- **A GraphQL subscription carries no delivery guarantee.** It says "something
+  changed, come and look", nothing more. There is no queue behind it, no
+  acknowledgement, no replay.
+- **A subscriber that was disconnected at the moment of the event misses it, and
+  that is fine**: reconnecting and refetching gives it the current state, which
+  is the same state the missed event announced. Design the client so a refetch
+  is always enough — never accumulate UI state from a stream of events.
+- **An event that must not be lost is not a subscription's job.** Put it on the
+  Asynq task queue (`internal/queue`), which persists in Redis, retries, and
+  survives a restart of the process that was supposed to handle it. Sending an
+  email, charging a card, syncing an external system: queue, not subscription.
+
 ## How to add things
 
 - **A GraphQL field** → edit `internal/graph/schema.graphqls` (give every new type,
