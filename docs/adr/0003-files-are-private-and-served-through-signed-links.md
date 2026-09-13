@@ -110,16 +110,18 @@ warns on `public`.
 - **The signing key is the deployment's S3 credential.** Anything that can sign can grant
   access to any object in the bucket. That was already true of the app's write access; it
   now also grants reads, so the credential's blast radius is the whole bucket.
-- **Residual risk, knowingly kept: a key is a claim, and nothing checks who owns it.**
-  The API signs a link for whatever object key a signed-in caller hands back as their
-  avatar. `KeyFromLink` checks the SHAPE of that key — a plain name under the bucket, no
-  leading slash, no `..` — but not that the key belongs to the caller. So anyone who
-  learns a key (from a link that leaked and then expired, say) can have a fresh link
-  signed for it, which weakens the "a leaked link stops working" guarantee to "a leaked
-  link stops working for people without an account". Acceptable while the only file in
-  the template is an avatar; the fix is an ownership lookup against the uploads table,
-  which needs an owner column that does not exist yet. The `ponytail:` comment at that
-  check names the same upgrade path.
+- **A key is a claim, so the file a client names has to be its own.** The API signs a
+  link for whatever object key a signed-in caller hands back as their avatar, and a key is
+  not a secret: it rides in every link we hand out, so it can be read off a screenshot, a
+  chat message or an expired URL. `KeyFromLink` checks only the SHAPE of the key (a plain
+  name under the bucket, no leading slash, no `..`); **who** it belongs to is checked
+  separately, by `upload.Service.OwnedBy` against the `uploads` row, wherever a client
+  hands a key back. Without it, "a leaked link stops working" would have meant "…for
+  people without an account". Two consequences of doing it this way: uploads now record
+  their uploader (migration `00002`, nullable), and a row with no owner — written before
+  that column existed, or whose uploader was deleted — is nobody's file rather than
+  everybody's, so re-submitting such an avatar is refused while the one already stored
+  keeps working (reads sign what the profile holds, they do not re-check ownership).
 - **Switching mode on a running stack is two steps, not one.** The variable changes what
   the app hands out; `docker compose up -d` re-runs the storage init that opens or closes
   the bucket. Change one without the other and the links and the bucket disagree —

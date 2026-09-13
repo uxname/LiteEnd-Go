@@ -53,6 +53,10 @@ func (f *fakePubSub) SubscribeForUser(_ context.Context, _ int32) <-chan sqlc.Pr
 // storagePrefix, anything else belongs to somebody else.
 type fakeLinks struct {
 	signErr error
+	// owned is the set of keys the caller uploaded; anything else is somebody
+	// else's file.
+	owned    map[string]int32
+	ownerErr error
 }
 
 const storagePrefix = "https://cdn.example.test/uploads"
@@ -74,6 +78,14 @@ func (f fakeLinks) KeyFromLink(link string) (string, bool) {
 }
 
 func (f fakeLinks) PermanentLink(key string) string { return storagePrefix + "/" + key }
+
+func (f fakeLinks) OwnedBy(_ context.Context, key string, profileID int32) (bool, error) {
+	if f.ownerErr != nil {
+		return false, f.ownerErr
+	}
+	owner, ok := f.owned[key]
+	return ok && owner == profileID, nil
+}
 
 type fakeEnqueuer struct {
 	calls []string
@@ -103,9 +115,12 @@ func adminCtx() context.Context {
 	})
 }
 
+// testUserID is the profile userCtx authenticates as.
+const testUserID int32 = 2
+
 func userCtx() context.Context {
 	return auth.WithUser(context.Background(), &sqlc.Profile{
-		ID:      2,
+		ID:      testUserID,
 		OidcSub: "user-sub",
 		Roles:   []sqlc.ProfileRole{sqlc.ProfileRoleUSER},
 	})
@@ -461,7 +476,8 @@ func TestUpdateProfile_StoresThePermanentAvatarLink(t *testing.T) {
 			return sqlc.Profile{ID: id, OidcSub: sub, AvatarUrl: in.AvatarURL}, nil
 		},
 	}
-	r := &resolver.Resolver{Profiles: profiles, PubSub: &fakePubSub{}, Files: fakeLinks{}, Log: discardLog()}
+	links := fakeLinks{owned: map[string]int32{"2026/01/02/03-04/pic.png": testUserID}}
+	r := &resolver.Resolver{Profiles: profiles, PubSub: &fakePubSub{}, Files: links, Log: discardLog()}
 
 	signed := storagePrefix + "/2026/01/02/03-04/pic.png?X-Amz-Signature=abc&X-Amz-Expires=900"
 	out, err := r.Mutation().UpdateProfile(userCtx(), model.ProfileUpdateInput{AvatarURL: &signed})
@@ -502,12 +518,67 @@ func TestUpdateProfile_UnsignableAvatarIsOmitted(t *testing.T) {
 	r := &resolver.Resolver{
 		Profiles: profiles,
 		PubSub:   &fakePubSub{},
-		Files:    fakeLinks{signErr: errors.New("no credentials")},
-		Log:      discardLog(),
+		Files: fakeLinks{
+			signErr: errors.New("no credentials"),
+			owned:   map[string]int32{"2026/01/02/03-04/pic.png": testUserID},
+		},
+		Log: discardLog(),
 	}
 
 	stored := storagePrefix + "/2026/01/02/03-04/pic.png"
 	out, err := r.Mutation().UpdateProfile(userCtx(), model.ProfileUpdateInput{AvatarURL: &stored})
 	require.NoError(t, err)
 	require.Nil(t, out.AvatarURL, "an unsignable avatar is left out, the profile still reads")
+}
+
+// A key is not a secret — it rides in every link we hand out — so naming
+// somebody else's file as your avatar must not get it signed for you.
+func TestUpdateProfile_RefusesAFileTheCallerDoesNotOwn(t *testing.T) {
+	t.Parallel()
+	called := false
+	profiles := fakeProfiles{
+		updateFn: func(_ context.Context, id int32, sub string, _ profile.UpdateParams) (sqlc.Profile, error) {
+			called = true
+			return sqlc.Profile{ID: id, OidcSub: sub}, nil
+		},
+	}
+	r := &resolver.Resolver{
+		Profiles: profiles,
+		PubSub:   &fakePubSub{},
+		// The key exists, and belongs to someone else.
+		Files: fakeLinks{owned: map[string]int32{"2026/01/02/03-04/pic.png": testUserID + 1}},
+		Log:   discardLog(),
+	}
+
+	theirs := storagePrefix + "/2026/01/02/03-04/pic.png?X-Amz-Signature=abc"
+	_, err := r.Mutation().UpdateProfile(userCtx(), model.ProfileUpdateInput{AvatarURL: &theirs})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "file you uploaded")
+	require.False(t, called, "nothing may be written when the file is not the caller's")
+
+	// Same for a key no upload ever recorded.
+	r.Files = fakeLinks{owned: map[string]int32{}}
+	_, err = r.Mutation().UpdateProfile(userCtx(), model.ProfileUpdateInput{AvatarURL: &theirs})
+	require.Error(t, err)
+}
+
+// A database that cannot answer the ownership question must fail the mutation,
+// not quietly store the avatar.
+func TestUpdateProfile_OwnershipLookupFailureIsFatal(t *testing.T) {
+	t.Parallel()
+	profiles := fakeProfiles{
+		updateFn: func(_ context.Context, id int32, sub string, _ profile.UpdateParams) (sqlc.Profile, error) {
+			return sqlc.Profile{ID: id, OidcSub: sub}, nil
+		},
+	}
+	r := &resolver.Resolver{
+		Profiles: profiles,
+		PubSub:   &fakePubSub{},
+		Files:    fakeLinks{ownerErr: errors.New("db down")},
+		Log:      discardLog(),
+	}
+
+	link := storagePrefix + "/2026/01/02/03-04/pic.png"
+	_, err := r.Mutation().UpdateProfile(userCtx(), model.ProfileUpdateInput{AvatarURL: &link})
+	require.Error(t, err)
 }

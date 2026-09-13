@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/uxname/liteend-go/internal/auth"
 	"github.com/uxname/liteend-go/internal/clientip"
 	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/httperr"
@@ -82,7 +83,16 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.SaveMetadata(r.Context(), saved, ip); err != nil {
+	// The route is mounted behind requireAuth, so a request without a user is a
+	// wiring mistake rather than an anonymous caller — and one that would store
+	// files nobody owns, which OwnedBy then refuses forever.
+	user, err := auth.Require(r.Context())
+	if err != nil {
+		writeErr(r.Context(), w, http.StatusUnauthorized, "Not authenticated", err)
+		return
+	}
+
+	if err := h.svc.SaveMetadata(r.Context(), saved, ip, user.ID); err != nil {
 		// Nothing to roll back here: SaveMetadata commits per file and has already
 		// undone the one it failed on. Files it committed before that stay stored
 		// and recorded, and the client is still told the batch failed — so a retry

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 
@@ -48,9 +49,10 @@ var allowedMimeTypes = map[string]struct{}{ //nolint:gochecknoglobals // static 
 	"image/webp": {},
 }
 
-// Writer is the subset of sqlc used to persist upload metadata.
+// Writer is the subset of sqlc used to persist and read back upload metadata.
 type Writer interface {
 	CreateUpload(ctx context.Context, arg sqlc.CreateUploadParams) (sqlc.Upload, error)
+	GetUploadByFilepath(ctx context.Context, filepath string) (sqlc.Upload, error)
 }
 
 // objectStore is the subset of the S3 client used to store uploaded objects.
@@ -202,6 +204,25 @@ func (s *Service) LinkFor(ctx context.Context, key string) (string, error) {
 	return signed.String(), nil
 }
 
+// OwnedBy reports whether the object under key was uploaded by this profile.
+//
+// It is the check that stops one signed-in user having a link signed for
+// another user's file. A key is a claim, not a credential: it travels in every
+// link we hand out, so by the time a client sends one back it may have been
+// read off a screenshot, a chat message or an expired URL. An object nobody
+// owns — a row from before owners were recorded, or one whose uploader was
+// deleted — belongs to nobody and is refused too.
+func (s *Service) OwnedBy(ctx context.Context, key string, profileID int32) (bool, error) {
+	up, err := s.q.GetUploadByFilepath(ctx, key)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read upload %q: %w", key, err)
+	}
+	return up.UploaderProfileID != nil && *up.UploaderProfileID == profileID, nil
+}
+
 // PermanentLink is the object's stable address: the public link prefix plus the
 // key. It is the form kept in the database — a value that names the object
 // without expiring. In private mode the storage refuses this URL as it stands
@@ -223,9 +244,8 @@ func (s *Service) KeyFromLink(link string) (string, bool) {
 	// refused: minio-go accepts "../x" as an object name, and a proxy that
 	// normalises the path would aim the request at a sibling bucket.
 	//
-	// ponytail: shape only. It does NOT check the key belongs to the caller —
-	// anyone holding a key can still have a fresh link signed for it. Add an
-	// uploads-table ownership lookup here when files stop being avatars.
+	// Shape only — whether the key is THIS caller's is OwnedBy's question, asked
+	// wherever a client hands a key back.
 	if key == "" || strings.HasPrefix(key, "/") || strings.Contains(key, "..") {
 		return "", false
 	}
@@ -416,7 +436,7 @@ func (s *Service) removeObject(ctx context.Context, f *SavedFile) {
 //
 // The error says how many files did commit: the caller reports the whole batch
 // as failed, so without that count nothing records that some of it is durable.
-func (s *Service) SaveMetadata(ctx context.Context, files []*SavedFile, ip string) error {
+func (s *Service) SaveMetadata(ctx context.Context, files []*SavedFile, ip string, ownerID int32) error {
 	if len(files) == 0 {
 		return nil
 	}
@@ -432,6 +452,9 @@ func (s *Service) SaveMetadata(ctx context.Context, files []*SavedFile, ip strin
 			Size:             int32(f.size), //nolint:gosec // size is capped at UploadMaxFileSize (5 MiB)
 			Mimetype:         f.mimetype,
 			UploaderIp:       ip,
+			// The owner, recorded so OwnedBy can answer later. /upload sits behind
+			// requireAuth, so there is always one.
+			UploaderProfileID: &ownerID,
 		}); err != nil {
 			s.removeObject(ctx, f)
 			return fmt.Errorf("save upload metadata (%d of %d files committed): %w", i, len(files), err)

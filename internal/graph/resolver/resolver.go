@@ -40,6 +40,8 @@ type FileLinks interface {
 	KeyFromLink(link string) (string, bool)
 	// PermanentLink is the non-expiring form of a key, the one kept in the database.
 	PermanentLink(key string) string
+	// OwnedBy reports whether the object under key was uploaded by this profile.
+	OwnedBy(ctx context.Context, key string, profileID int32) (bool, error)
 }
 
 // Enqueuer adds jobs to the background queue (wired in the queue phase).

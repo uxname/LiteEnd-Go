@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/stretchr/testify/require"
@@ -25,16 +26,45 @@ import (
 	"github.com/uxname/liteend-go/internal/db/sqlc"
 )
 
-type fakeWriter struct{ count int }
+// storedUploads is the read half of Writer, shared by the fakes below: each
+// keeps the rows it accepted so OwnedBy has something to answer from.
+type storedUploads struct {
+	rows map[string]sqlc.Upload
+}
 
-func (f *fakeWriter) CreateUpload(_ context.Context, _ sqlc.CreateUploadParams) (sqlc.Upload, error) {
+func (u *storedUploads) remember(arg sqlc.CreateUploadParams, id int32) sqlc.Upload {
+	if u.rows == nil {
+		u.rows = map[string]sqlc.Upload{}
+	}
+	row := sqlc.Upload{ID: id, Filepath: arg.Filepath, UploaderProfileID: arg.UploaderProfileID}
+	u.rows[arg.Filepath] = row
+	return row
+}
+
+func (u *storedUploads) GetUploadByFilepath(_ context.Context, filepath string) (sqlc.Upload, error) {
+	row, ok := u.rows[filepath]
+	if !ok {
+		return sqlc.Upload{}, pgx.ErrNoRows
+	}
+	return row, nil
+}
+
+type fakeWriter struct {
+	storedUploads
+	count int
+}
+
+func (f *fakeWriter) CreateUpload(_ context.Context, arg sqlc.CreateUploadParams) (sqlc.Upload, error) {
 	f.count++
-	return sqlc.Upload{ID: int32(f.count)}, nil
+	return f.remember(arg, int32(f.count)), nil
 }
 
 // failingWriter refuses to record metadata, which is how a batch that is
 // already in the object store still has to fail.
-type failingWriter struct{ err error }
+type failingWriter struct {
+	storedUploads
+	err error
+}
 
 func (f *failingWriter) CreateUpload(_ context.Context, _ sqlc.CreateUploadParams) (sqlc.Upload, error) {
 	return sqlc.Upload{}, f.err
@@ -44,6 +74,7 @@ func (f *failingWriter) CreateUpload(_ context.Context, _ sqlc.CreateUploadParam
 // commit. That is the shape of a partly written batch: some rows are already
 // durable when a later one fails.
 type nthFailWriter struct {
+	storedUploads
 	failOn    int
 	err       error
 	calls     int
@@ -109,6 +140,9 @@ func (f *fakeStore) GetBucketLocation(_ context.Context, _ string) (string, erro
 }
 
 const testPublicURL = "https://cdn.example.test/uploads"
+
+// testOwnerID is the profile every test upload belongs to.
+const testOwnerID int32 = 7
 
 // fakeSigner stands in for the S3 client's presigner: it produces the same
 // shape of URL (permanent link + a signature query) without any crypto.
@@ -194,7 +228,7 @@ func TestC5_UploadIsCommittedToObjectStorage(t *testing.T) {
 	require.NotNil(t, f)
 	require.Empty(t, store.objects, "nothing is stored before the batch is committed")
 
-	require.NoError(t, s.SaveMetadata(context.Background(), []*SavedFile{f}, "10.0.0.1"))
+	require.NoError(t, s.SaveMetadata(context.Background(), []*SavedFile{f}, "10.0.0.1", testOwnerID))
 
 	require.Len(t, store.objects, 1, "exactly one object must be stored")
 	obj, ok := store.objects[f.key]
@@ -308,7 +342,7 @@ func TestC5_MetadataFailureRemovesStoredObjects(t *testing.T) {
 	f, err := s.ProcessFile(context.Background(), "pic.png", "image/png", strings.NewReader(pngMagic+"data"))
 	require.NoError(t, err)
 
-	err = s.SaveMetadata(context.Background(), []*SavedFile{f}, "10.0.0.1")
+	err = s.SaveMetadata(context.Background(), []*SavedFile{f}, "10.0.0.1", testOwnerID)
 	require.ErrorIs(t, err, os.ErrPermission)
 	require.Equal(t, []string{f.key}, store.removed, "the stored object must not outlive the failed batch")
 }
@@ -335,7 +369,7 @@ func TestC5_BatchFailureKeepsCommittedFilesAndRollsBackOnlyTheFailedOne(t *testi
 		files = append(files, f)
 	}
 
-	err := s.SaveMetadata(context.Background(), files, "10.0.0.1")
+	err := s.SaveMetadata(context.Background(), files, "10.0.0.1", testOwnerID)
 	require.ErrorIs(t, err, os.ErrPermission, "a failed row insert must fail the call")
 
 	require.Equal(t, []string{files[0].key}, w.committed, "the batch must stop at the failure")
@@ -498,4 +532,60 @@ func TestKeyFromLink_RefusesKeysThatEscapeTheBucket(t *testing.T) {
 		_, ours := s.KeyFromLink(link)
 		require.False(t, ours, "must not sign a link for %q", link)
 	}
+}
+
+// OwnedBy is the check that keeps one user from having a link signed for
+// another user's file, so it has to be strict in all four directions.
+func TestOwnedBy(t *testing.T) {
+	t.Parallel()
+	s, _ := newSvc(t)
+	writer, ok := s.q.(*fakeWriter)
+	require.True(t, ok)
+
+	const key = "2026/01/02/03-04/pic.png"
+	owner := testOwnerID
+	stranger := testOwnerID + 1
+	_, err := writer.CreateUpload(t.Context(), sqlc.CreateUploadParams{
+		Filepath: key, UploaderProfileID: &owner,
+	})
+	require.NoError(t, err)
+
+	owned, err := s.OwnedBy(t.Context(), key, owner)
+	require.NoError(t, err)
+	require.True(t, owned, "the uploader owns the file")
+
+	owned, err = s.OwnedBy(t.Context(), key, stranger)
+	require.NoError(t, err)
+	require.False(t, owned, "somebody else does not")
+
+	owned, err = s.OwnedBy(t.Context(), "2026/01/02/03-04/never-uploaded.png", owner)
+	require.NoError(t, err)
+	require.False(t, owned, "a key no upload recorded belongs to nobody")
+
+	// A row from before owners were recorded, or one whose uploader was deleted.
+	_, err = writer.CreateUpload(t.Context(), sqlc.CreateUploadParams{
+		Filepath: "2026/01/02/03-04/ownerless.png", UploaderProfileID: nil,
+	})
+	require.NoError(t, err)
+	owned, err = s.OwnedBy(t.Context(), "2026/01/02/03-04/ownerless.png", owner)
+	require.NoError(t, err)
+	require.False(t, owned, "an ownerless row is nobody's file, not everybody's")
+}
+
+// SaveMetadata records who uploaded the file — without that column OwnedBy has
+// nothing to answer from.
+func TestSaveMetadata_RecordsTheOwner(t *testing.T) {
+	t.Parallel()
+	s, _ := newSvc(t)
+	writer, ok := s.q.(*fakeWriter)
+	require.True(t, ok)
+
+	f, err := s.ProcessFile(t.Context(), "pic.png", "image/png", strings.NewReader(pngMagic+"data"))
+	require.NoError(t, err)
+	require.NoError(t, s.SaveMetadata(t.Context(), []*SavedFile{f}, "203.0.113.1", testOwnerID))
+
+	row, err := writer.GetUploadByFilepath(t.Context(), f.key)
+	require.NoError(t, err)
+	require.NotNil(t, row.UploaderProfileID)
+	require.Equal(t, testOwnerID, *row.UploaderProfileID)
 }

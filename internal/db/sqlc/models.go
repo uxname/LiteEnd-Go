@@ -81,13 +81,14 @@ type Profile struct {
 }
 
 type Upload struct {
-	ID               int32
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
-	Filepath         string
-	OriginalFilename string
-	Extension        string
-	Size             int32
-	Mimetype         string
-	UploaderIp       string
+	ID                int32
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	Filepath          string
+	OriginalFilename  string
+	Extension         string
+	Size              int32
+	Mimetype          string
+	UploaderIp        string
+	UploaderProfileID *int32
 }

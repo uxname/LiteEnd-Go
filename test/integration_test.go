@@ -275,6 +275,26 @@ func TestFilesArePrivate_UnsignedRequestIsRefused(t *testing.T) {
 	require.Equal(t, http.StatusOK, ok.StatusCode)
 }
 
+// The file a client names as its avatar has to be its own. A key is not a
+// secret — it travels in every link the API hands out — so without this check
+// anyone could name a key read off someone else's expired link and have a
+// working one signed for it.
+func TestFilesArePrivate_RefusesAFileTheCallerDidNotUpload(t *testing.T) {
+	// A key in the right shape that no upload ever recorded: exactly what an
+	// attacker has after reading one off a screenshot, since the row is what
+	// carries the owner.
+	stranger := publicBaseURL + "/2026/01/02/03-04/00000000-0000-4000-8000-000000000000.png"
+	errs := gqlErr(t, `mutation($i:ProfileUpdateInput!){updateProfile(input:$i){avatarUrl}}`,
+		map[string]any{"i": map[string]any{"avatarUrl": stranger}})
+	require.NotEmpty(t, errs, "a file the caller did not upload must be refused")
+	require.Contains(t, fmt.Sprint(errs[0]["message"]), "file you uploaded")
+
+	// The profile is untouched: the mutation failed before anything was written.
+	data := gql(t, `{ me { avatarUrl } }`, nil, nil)
+	avatar, _ := data["me"].(map[string]any)["avatarUrl"].(string)
+	require.NotContains(t, avatar, "00000000-0000-4000-8000-000000000000")
+}
+
 // The avatar a client stores is the permanent key form, and every read hands
 // back a freshly signed link for it — a stored signature would expire.
 func TestFilesArePrivate_AvatarIsReSignedOnEveryRead(t *testing.T) {
@@ -412,6 +432,27 @@ func TestSubscription_ProfileUpdated(t *testing.T) {
 }
 
 // --- helpers ---
+
+// gqlErr is gql for the cases where the error IS the assertion: it returns the
+// GraphQL errors instead of failing on them.
+func gqlErr(t *testing.T, query string, vars map[string]any) []map[string]any {
+	t.Helper()
+	reqBody, _ := json.Marshal(map[string]any{"query": query, "variables": vars})
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/graphql", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equalf(t, http.StatusOK, resp.StatusCode, "POST /graphql answered %d: %s", resp.StatusCode, body)
+
+	var out struct {
+		Errors []map[string]any `json:"errors"`
+	}
+	require.NoError(t, json.Unmarshal(body, &out))
+	return out.Errors
+}
 
 func gql(t *testing.T, query string, vars map[string]any, headers map[string]string) map[string]any {
 	t.Helper()

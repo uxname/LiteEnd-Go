@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/uxname/liteend-go/internal/auth"
 	"github.com/uxname/liteend-go/internal/db/sqlc"
 	"github.com/uxname/liteend-go/internal/logger"
 	appmw "github.com/uxname/liteend-go/internal/middleware"
@@ -59,11 +60,16 @@ func TestWriteErr_RejectedInputWarnsWithoutACause(t *testing.T) {
 }
 
 // ipCapturingWriter records the uploader_ip a committed batch is stored with.
-type ipCapturingWriter struct{ ip string }
+type ipCapturingWriter struct {
+	storedUploads
+	ip    string
+	owner *int32
+}
 
 func (w *ipCapturingWriter) CreateUpload(_ context.Context, arg sqlc.CreateUploadParams) (sqlc.Upload, error) {
 	w.ip = arg.UploaderIp
-	return sqlc.Upload{ID: 1}, nil
+	w.owner = arg.UploaderProfileID
+	return w.remember(arg, 1), nil
 }
 
 // pngUpload builds a single-file multipart body the handler will accept.
@@ -119,6 +125,9 @@ func TestC8_UploaderIPComesFromTheTrustedSourceNotTheHeader(t *testing.T) {
 			req.Header.Set("Content-Type", contentType)
 			req.Header.Set("X-Forwarded-For", c.xff)
 			req.RemoteAddr = c.remote
+			// The real route sits behind requireAuth, which is what puts the
+			// profile in the context; this test drives the handler directly.
+			req = req.WithContext(auth.WithUser(req.Context(), &sqlc.Profile{ID: testOwnerID}))
 
 			rec := httptest.NewRecorder()
 			appmw.RealIP(c.hops)(http.HandlerFunc(NewHandler(svc).upload)).ServeHTTP(rec, req)

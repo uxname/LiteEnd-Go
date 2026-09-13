@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	"github.com/uxname/liteend-go/internal/db/sqlc"
@@ -52,14 +53,28 @@ func (r *Resolver) avatarLink(ctx context.Context, stored *string) *string {
 // sent back. A client hands back the link it just got from POST /upload —
 // signature, expiry and all — and storing that would store a value that stops
 // working. Links to other hosts are kept as they are.
-func (r *Resolver) storedAvatar(link *string) *string {
+//
+// It is also where the file is checked to be the caller's. A key is not a
+// secret: it rides in every link we hand out, so it can be read off a
+// screenshot or an expired URL. Without this check, naming someone else's key
+// as your avatar would have the API sign a fresh, working link for it — which
+// would make "a leaked link stops working" true only for people without an
+// account.
+func (r *Resolver) storedAvatar(ctx context.Context, profileID int32, link *string) (*string, error) {
 	if link == nil || r.Files == nil {
-		return link
+		return link, nil
 	}
 	key, ours := r.Files.KeyFromLink(*link)
 	if !ours {
-		return link
+		return link, nil
+	}
+	owned, err := r.Files.OwnedBy(ctx, key, profileID)
+	if err != nil {
+		return nil, fmt.Errorf("check avatar ownership: %w", err)
+	}
+	if !owned {
+		return nil, badInput("avatarUrl must be a file you uploaded")
 	}
 	permanent := r.Files.PermanentLink(key)
-	return &permanent
+	return &permanent, nil
 }

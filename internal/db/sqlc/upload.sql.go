@@ -11,20 +11,21 @@ import (
 
 const createUpload = `-- name: CreateUpload :one
 INSERT INTO uploads (
-    filepath, original_filename, extension, size, mimetype, uploader_ip
+    filepath, original_filename, extension, size, mimetype, uploader_ip, uploader_profile_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6
+    $1, $2, $3, $4, $5, $6, $7
 )
-RETURNING id, created_at, updated_at, filepath, original_filename, extension, size, mimetype, uploader_ip
+RETURNING id, created_at, updated_at, filepath, original_filename, extension, size, mimetype, uploader_ip, uploader_profile_id
 `
 
 type CreateUploadParams struct {
-	Filepath         string
-	OriginalFilename string
-	Extension        string
-	Size             int32
-	Mimetype         string
-	UploaderIp       string
+	Filepath          string
+	OriginalFilename  string
+	Extension         string
+	Size              int32
+	Mimetype          string
+	UploaderIp        string
+	UploaderProfileID *int32
 }
 
 func (q *Queries) CreateUpload(ctx context.Context, arg CreateUploadParams) (Upload, error) {
@@ -35,6 +36,7 @@ func (q *Queries) CreateUpload(ctx context.Context, arg CreateUploadParams) (Upl
 		arg.Size,
 		arg.Mimetype,
 		arg.UploaderIp,
+		arg.UploaderProfileID,
 	)
 	var i Upload
 	err := row.Scan(
@@ -47,12 +49,13 @@ func (q *Queries) CreateUpload(ctx context.Context, arg CreateUploadParams) (Upl
 		&i.Size,
 		&i.Mimetype,
 		&i.UploaderIp,
+		&i.UploaderProfileID,
 	)
 	return i, err
 }
 
 const getUploadByFilepath = `-- name: GetUploadByFilepath :one
-SELECT id, created_at, updated_at, filepath, original_filename, extension, size, mimetype, uploader_ip FROM uploads WHERE filepath = $1
+SELECT id, created_at, updated_at, filepath, original_filename, extension, size, mimetype, uploader_ip, uploader_profile_id FROM uploads WHERE filepath = $1
 `
 
 func (q *Queries) GetUploadByFilepath(ctx context.Context, filepath string) (Upload, error) {
@@ -68,6 +71,7 @@ func (q *Queries) GetUploadByFilepath(ctx context.Context, filepath string) (Upl
 		&i.Size,
 		&i.Mimetype,
 		&i.UploaderIp,
+		&i.UploaderProfileID,
 	)
 	return i, err
 }
