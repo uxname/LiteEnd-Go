@@ -51,6 +51,12 @@ const (
 	// every authenticated request indefinitely.
 	OIDCHTTPTimeout = 5 * time.Second
 
+	// OIDCClockSkew is how far this server's clock may run ahead of the issuer's
+	// before valid tokens start being rejected. A token that expired less than
+	// this ago is still accepted; past it, it is not. Without the tolerance a
+	// second of drift between two hosts logs users out at random.
+	OIDCClockSkew = 60 * time.Second
+
 	// Redis tuning.
 	RedisConnectTimeout = 10 * time.Second
 	RedisRetryMaxDelay  = 3 * time.Second
@@ -87,4 +93,14 @@ const (
 	// Upload limits (per @fastify/multipart config).
 	UploadMaxFileSize = 5 * 1024 * 1024
 	UploadMaxFiles    = 10
+
+	// File visibility modes, the two values FILE_VISIBILITY takes.
+	// Private is the default: files are reachable only through a signed link.
+	FileVisibilityPrivate = "private"
+	FileVisibilityPublic  = "public"
+
+	// MaxFileLinkTTL is the longest a signed link may live — the AWS SigV4
+	// limit, which every S3-compatible store enforces. Asking for more produces
+	// links the storage refuses, so the config is rejected at boot instead.
+	MaxFileLinkTTL = 7 * 24 * time.Hour
 )

@@ -51,11 +51,15 @@ without the coverage gate.
 There is **no CI** — this gate lives entirely in the git hook, so `--no-verify`
 bypasses it locally. Don't.
 
-## Known blind spot
+## The real token check
 
-`internal/auth/verifier.go`'s `Verify` — the actual token check (signature, issuer,
-audience, expiry) — is **untested**: every unit test builds `NewMiddleware(nil, …)`
-with `mockEnabled=true`, and the integration suite sets `OIDC_MOCK_ENABLED=true`.
-`Middleware.verifier` is a concrete `*Verifier`; extracting a consumer-side
-interface (as `Profiles` in the same file already is) is what unblocks testing it.
-Don't add code that leans on `Verify` being covered — it isn't.
+`internal/auth/verifier.go`'s `Verify` — signature, issuer, audience, expiry — is
+covered by `verifier_test.go` with **no mock auth**: the test starts a local JWKS
+endpoint (`httptest`), signs its own tokens with the matching key, and asserts that
+an expired, foreign-issuer, foreign-audience or foreign-signature token is refused.
+The middleware tests still build `NewMiddleware(nil, …)` with `mockEnabled=true` —
+that is their subject, not a gap.
+
+`config.OIDCClockSkew` (60s) is the tolerated clock drift between this host and the
+issuer, and it is tested from both sides: expired inside the tolerance passes,
+expired past it does not. Change the constant and that test tells you.

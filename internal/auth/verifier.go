@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 
@@ -28,6 +29,11 @@ func NewVerifier(ctx context.Context, cfg *config.Config) *Verifier {
 	v := oidc.NewVerifier(cfg.OIDCIssuer, keySet, &oidc.Config{
 		ClientID:             cfg.OIDCAudience,
 		SupportedSigningAlgs: []string{oidc.RS256, oidc.ES384},
+		// Expiry is checked against a clock held config.OIDCClockSkew behind the
+		// real one, which is how the library expresses "tolerate that much drift":
+		// a token that expired a few seconds ago still passes, one expired past
+		// the tolerance does not.
+		Now: func() time.Time { return time.Now().Add(-config.OIDCClockSkew) },
 	})
 	return &Verifier{verifier: v}
 }

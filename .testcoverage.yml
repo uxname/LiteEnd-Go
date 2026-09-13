@@ -47,5 +47,11 @@ override:
     threshold: 83
   - path: ^internal/profile$
     threshold: 64
+  # Was 70 while Verify — the real token check — had no test at all. With
+  # verifier_test.go the package measures 82.4; the floor sits under that.
   - path: ^internal/auth$
-    threshold: 70
+    threshold: 80
+  # Redaction is the reason a password never reaches a log file. Its package had
+  # no test at all until the floor below made removing them fail the gate.
+  - path: ^internal/logger$
+    threshold: 90
