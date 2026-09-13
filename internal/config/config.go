@@ -112,6 +112,25 @@ func (c *Config) validateFileLinks() error {
 		return fmt.Errorf("FILE_VISIBILITY must be %q or %q, got %q",
 			FileVisibilityPrivate, FileVisibilityPublic, c.FileVisibility)
 	}
+	// The shape of the public base, in BOTH modes: every file address is this
+	// value plus "/" plus the key, so a typo here is a dead link either way. A
+	// scheme that is not http(s) is the dangerous one — url.Parse accepts
+	// "htps://host/uploads" and "//host/uploads" happily, and the signing client
+	// reads TLS off this scheme alone, so either typo signs http links against a
+	// host listening only on 443. A query or a fragment would land in the middle
+	// of the address, before the key.
+	u, err := url.Parse(c.S3PublicBaseURL)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf(
+			"S3_PUBLIC_BASE_URL must be an absolute http(s) URL (scheme://host[:port][/bucket]), got %q",
+			c.S3PublicBaseURL)
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf(
+			"S3_PUBLIC_BASE_URL must carry no query or fragment — a file address is this value plus "+
+				"\"/\" plus the object key, got %q", c.S3PublicBaseURL)
+	}
+
 	if c.FilesArePublic() {
 		return nil
 	}
@@ -127,12 +146,6 @@ func (c *Config) validateFileLinks() error {
 	// would be signed for /uploads/<key> and the browser would ask for a path
 	// that does not exist. Ending in the bucket name is therefore not enough —
 	// the path has to be nothing but the bucket.
-	u, err := url.Parse(c.S3PublicBaseURL)
-	if err != nil || u.Host == "" {
-		return fmt.Errorf(
-			"S3_PUBLIC_BASE_URL must be an absolute http(s) URL when FILE_VISIBILITY=private, got %q",
-			c.S3PublicBaseURL)
-	}
 	if u.Path != "/"+c.S3Bucket {
 		return fmt.Errorf(
 			"S3_PUBLIC_BASE_URL must be exactly <public S3 API address>/%s when FILE_VISIBILITY=private "+

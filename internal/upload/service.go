@@ -142,12 +142,21 @@ func New(cfg *config.Config, q Writer) (*Service, error) {
 // is read once through the client that CAN reach the storage, and handed over.
 func (s *Service) linkSignerFor(ctx context.Context) (linkSigner, error) {
 	s.signerMu.Lock()
-	defer s.signerMu.Unlock()
-	if s.signer != nil {
-		return s.signer, nil
+	signer := s.signer
+	s.signerMu.Unlock()
+	if signer != nil {
+		return signer, nil
 	}
 
-	region, err := s.store.GetBucketLocation(ctx, s.bucket)
+	// The lookup runs OUTSIDE the lock, and under a timeout. Holding the mutex
+	// across it would mean that a storage which is merely slow turns every
+	// concurrent profile read into a queue, each waiting a full dial — a storage
+	// outage would stall unrelated GraphQL reads instead of failing them. Racing
+	// callers may each build a client; they are local objects that open no
+	// connection, and only the first one is kept.
+	lookupCtx, cancel := context.WithTimeout(ctx, config.FileUploadTimeout)
+	defer cancel()
+	region, err := s.store.GetBucketLocation(lookupCtx, s.bucket)
 	if err != nil {
 		return nil, fmt.Errorf("read storage region for %q: %w", s.bucket, err)
 	}
@@ -163,8 +172,13 @@ func (s *Service) linkSignerFor(ctx context.Context) (linkSigner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build link-signing client: %w", err)
 	}
-	s.signer = client
-	return client, nil
+
+	s.signerMu.Lock()
+	defer s.signerMu.Unlock()
+	if s.signer == nil {
+		s.signer = client
+	}
+	return s.signer, nil
 }
 
 // LinkFor returns the URL a browser downloads the stored object from.
@@ -263,8 +277,9 @@ func AllowedMime(mimetype string) bool {
 // UploadMaxFileSize.
 //
 // Storing the bytes happens in SaveMetadata; the only call out of here is the
-// one-off region lookup the first signed link of a process needs (see
-// linkSignerFor) — every later call signs locally.
+// region lookup a signed link needs (see linkSignerFor) — made once per process
+// on the success path, and retried by each caller while the storage is refusing
+// it, so an unreachable storage fails an upload here before any bytes move.
 func (s *Service) ProcessFile(
 	ctx context.Context, originalFilename, mimetype string, body io.Reader,
 ) (*SavedFile, error) {

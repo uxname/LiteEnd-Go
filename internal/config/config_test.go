@@ -214,6 +214,29 @@ func TestLoad_PrivateModeRequiresBucketInPublicBaseURL(t *testing.T) {
 	require.True(t, cfg.FilesArePublic())
 }
 
+// The scheme is not decoration: the signing client reads TLS off it alone, so a
+// typo signs http links against a host that only listens on 443 — and url.Parse
+// is happy with both of these. A query or fragment would sit between the bucket
+// and the key.
+func TestLoad_RejectsAPublicBaseThatIsNotAPlainURL(t *testing.T) {
+	for _, base := range []string{
+		"htps://files.example.test/uploads", // scheme typo
+		"//files.example.test/uploads",      // protocol-relative paste
+		"files.example.test/uploads",        // no scheme at all
+		"http://files.example.test/uploads?versionId=1",
+		"http://files.example.test/uploads#frag",
+	} {
+		t.Run(base, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("S3_PUBLIC_BASE_URL", base)
+
+			_, err := Load()
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "S3_PUBLIC_BASE_URL")
+		})
+	}
+}
+
 func TestLoad_RejectsImpossibleLinkLifetimes(t *testing.T) {
 	for _, ttl := range []string{"0", "-5", "20160"} { // 20160 minutes = 14 days
 		t.Run(ttl, func(t *testing.T) {
