@@ -1,7 +1,7 @@
 # ADR 0002: Uploads live in object storage, and the client IP comes from a counted proxy chain
 
 - **Date:** 2026-09-05
-- **Status:** accepted
+- **Status:** accepted; the permanent-public-URL half is superseded by [ADR-0003](./0003-files-are-private-and-served-through-signed-links.md) — object storage and the client-IP decision stand, but files are private and links are signed by default
 
 ## Context
 

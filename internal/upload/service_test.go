@@ -2,9 +2,11 @@ package upload
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/stretchr/testify/require"
 
 	"github.com/uxname/liteend-go/internal/config"
@@ -65,10 +68,11 @@ type storedObject struct {
 
 // fakeStore is an in-memory objectStore: unit tests must not need a live S3.
 type fakeStore struct {
-	objects   map[string]storedObject
-	removed   []string
-	putErr    error
-	removeErr error
+	objects     map[string]storedObject
+	removed     []string
+	putErr      error
+	removeErr   error
+	locationErr error
 }
 
 func (f *fakeStore) PutObject(
@@ -97,18 +101,51 @@ func (f *fakeStore) RemoveObject(_ context.Context, _, key string, _ minio.Remov
 	return nil
 }
 
+func (f *fakeStore) GetBucketLocation(_ context.Context, _ string) (string, error) {
+	if f.locationErr != nil {
+		return "", f.locationErr
+	}
+	return "us-east-1", nil
+}
+
 const testPublicURL = "https://cdn.example.test/uploads"
 
+// fakeSigner stands in for the S3 client's presigner: it produces the same
+// shape of URL (permanent link + a signature query) without any crypto.
+type fakeSigner struct {
+	err error
+}
+
+func (f *fakeSigner) PresignedGetObject(
+	_ context.Context, bucket, key string, expiry time.Duration, _ url.Values,
+) (*url.URL, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	signed, err := url.Parse(fmt.Sprintf("%s/%s?X-Amz-Expires=%d&X-Amz-Signature=fake&bucket=%s",
+		testPublicURL, key, int(expiry.Seconds()), bucket))
+	if err != nil {
+		return nil, fmt.Errorf("build fake signed url: %w", err)
+	}
+	return signed, nil
+}
+
 // newSvc builds a Service wired to an in-memory store, the same way New wires
-// the real one.
+// the real one. Files are private, the default.
 func newSvc(t *testing.T) (*Service, *fakeStore) {
 	t.Helper()
-	store := &fakeStore{objects: map[string]storedObject{}, removed: nil, putErr: nil, removeErr: nil}
+	store := &fakeStore{
+		objects: map[string]storedObject{}, removed: nil,
+		putErr: nil, removeErr: nil, locationErr: nil,
+	}
 	return &Service{
 		q:         &fakeWriter{},
 		store:     store,
+		signer:    &fakeSigner{err: nil},
 		bucket:    "uploads",
 		publicURL: testPublicURL,
+		public:    false,
+		linkTTL:   15 * time.Minute,
 	}, store
 }
 
@@ -172,7 +209,10 @@ func TestC5_UploadIsCommittedToObjectStorage(t *testing.T) {
 	require.NoError(t, uuidErr, "the object name is a UUID, not the client filename")
 	require.Equal(t, path.Base(f.key), f.Filename)
 
-	require.Equal(t, testPublicURL+"/"+f.key, f.Path, "the link is built from S3_PUBLIC_BASE_URL")
+	require.Equal(t, f.key, f.Key, "the permanent object key is returned alongside the link")
+	require.True(t, strings.HasPrefix(f.Path, testPublicURL+"/"+f.key+"?"),
+		"the link is the signed form of S3_PUBLIC_BASE_URL + key, got %q", f.Path)
+	require.Contains(t, f.Path, "X-Amz-Signature=", "private files are served through a signed link")
 
 	require.NoDirExists(t, filepath.Join(t.TempDir(), "2020"), "nothing may land on local disk")
 }
@@ -361,4 +401,83 @@ func TestC5_ParseEndpoint(t *testing.T) {
 		require.Equal(t, c.wantHost, host, "host of %q", c.raw)
 		require.Equal(t, c.wantSecure, secure, "tls of %q", c.raw)
 	}
+}
+
+// The two directions a link travels: out to the browser (signed, expiring) and
+// back in as the value a client asks to store (normalised to the permanent
+// form, because a signature stored is a link that stops working).
+func TestLinkFor_PrivateSignsAndPublicDoesNot(t *testing.T) {
+	t.Parallel()
+	s, _ := newSvc(t)
+
+	signed, err := s.LinkFor(t.Context(), "2026/01/02/03-04/pic.png")
+	require.NoError(t, err)
+	require.Contains(t, signed, "X-Amz-Signature=", "private mode hands out a signed link")
+	require.Contains(t, signed, "X-Amz-Expires=900", "the link carries the configured lifetime")
+
+	s.public = true
+	plain, err := s.LinkFor(t.Context(), "2026/01/02/03-04/pic.png")
+	require.NoError(t, err)
+	require.Equal(t, testPublicURL+"/2026/01/02/03-04/pic.png", plain,
+		"public mode hands out the permanent link, unsigned")
+}
+
+func TestLinkFor_SigningFailureIsReported(t *testing.T) {
+	t.Parallel()
+	s, _ := newSvc(t)
+	s.signer = &fakeSigner{err: errors.New("no credentials")}
+
+	_, err := s.LinkFor(t.Context(), "2026/01/02/03-04/pic.png")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "sign link")
+}
+
+func TestKeyFromLink(t *testing.T) {
+	t.Parallel()
+	s, _ := newSvc(t)
+
+	key, ours := s.KeyFromLink(testPublicURL + "/2026/01/02/03-04/pic.png?X-Amz-Signature=abc")
+	require.True(t, ours)
+	require.Equal(t, "2026/01/02/03-04/pic.png", key, "the signature query is not part of the key")
+
+	key, ours = s.KeyFromLink(s.PermanentLink("2026/01/02/03-04/pic.png"))
+	require.True(t, ours)
+	require.Equal(t, "2026/01/02/03-04/pic.png", key)
+
+	_, ours = s.KeyFromLink("https://i.pravatar.cc/300")
+	require.False(t, ours, "somebody else's URL is not one of our keys")
+
+	_, ours = s.KeyFromLink(testPublicURL + "/")
+	require.False(t, ours, "the bare prefix names no object")
+}
+
+// The signing client is built on first use, from the region the storage itself
+// reports — asked through the internal client, because the public endpoint is
+// usually unreachable from inside the network. A storage that cannot answer
+// must fail the link, not the process.
+func TestLinkFor_BuildsTheSignerFromTheStorageRegion(t *testing.T) {
+	t.Parallel()
+	s, store := newSvc(t)
+	s.signer = nil // as New leaves it
+	s.creds = credentials.NewStaticV4("key", "secret", "")
+	s.publicEndpoint = "cdn.example.test"
+	s.publicSecure = true
+
+	link, err := s.LinkFor(t.Context(), "2026/01/02/03-04/pic.png")
+	require.NoError(t, err)
+	require.Contains(t, link, "https://cdn.example.test/uploads/2026/01/02/03-04/pic.png?",
+		"the link is built for the PUBLIC address, path-style")
+	require.Contains(t, link, "X-Amz-Credential=key%2F", "signed with the configured credentials")
+	require.Contains(t, link, "%2Fus-east-1%2Fs3%2Faws4_request", "…for the region the storage reported")
+	require.NotNil(t, s.signer, "the client is kept for the next link")
+
+	s2, _ := newSvc(t)
+	s2.signer = nil
+	s2.creds = credentials.NewStaticV4("key", "secret", "")
+	s2.publicEndpoint = "cdn.example.test"
+	store.locationErr = errors.New("storage down")
+	s2.store = store
+	_, err = s2.LinkFor(t.Context(), "2026/01/02/03-04/pic.png")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "read storage region")
 }

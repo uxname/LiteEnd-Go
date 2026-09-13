@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/caarlos0/env/v11"
 	"github.com/joho/godotenv"
@@ -54,6 +55,23 @@ type Config struct {
 	// A file URL is S3PublicBaseURL + "/" + object key.
 	S3PublicBaseURL string `env:"S3_PUBLIC_BASE_URL,required,notEmpty"`
 
+	// FileVisibility decides how a stored file is handed to a browser.
+	//
+	//	private (default) — the bucket stays closed to anonymous readers and the
+	//	                    API hands out a SIGNED link that expires after
+	//	                    FileLinkTTLMinutes. A plain request for the same file
+	//	                    is refused by the storage.
+	//	public            — the bucket is world-readable and the API hands out
+	//	                    the permanent link. Simpler, cacheable, and anyone
+	//	                    holding the URL keeps access forever.
+	//
+	// It is a deployment decision, not a per-file one: see docs/adr/0003.
+	FileVisibility string `env:"FILE_VISIBILITY" envDefault:"private"`
+	// FileLinkTTLMinutes is how long a signed link stays valid. Only read in
+	// private mode. Keep it short — the link is a bearer token for that one
+	// object, and anything holding it can read the file until it expires.
+	FileLinkTTLMinutes int `env:"FILE_LINK_TTL_MINUTES" envDefault:"15"`
+
 	// OIDC
 	OIDCIssuer      string `env:"OIDC_ISSUER,required"`
 	OIDCAudience    string `env:"OIDC_AUDIENCE,required"`
@@ -73,6 +91,42 @@ type Config struct {
 
 // IsProduction reports whether the app runs in production mode.
 func (c *Config) IsProduction() bool { return c.Env == "production" }
+
+// FileLinkTTL is how long a signed file link stays valid.
+func (c *Config) FileLinkTTL() time.Duration {
+	return time.Duration(c.FileLinkTTLMinutes) * time.Minute
+}
+
+// FilesArePublic reports whether stored files are served by a permanent public
+// link instead of a signed one.
+func (c *Config) FilesArePublic() bool { return c.FileVisibility == FileVisibilityPublic }
+
+// validateFileLinks refuses a file configuration that would only fail later, at
+// the first upload, as a link nobody can open.
+func (c *Config) validateFileLinks() error {
+	if c.FileVisibility != FileVisibilityPrivate && c.FileVisibility != FileVisibilityPublic {
+		return fmt.Errorf("FILE_VISIBILITY must be %q or %q, got %q",
+			FileVisibilityPrivate, FileVisibilityPublic, c.FileVisibility)
+	}
+	if c.FilesArePublic() {
+		return nil
+	}
+	if c.FileLinkTTLMinutes < 1 || c.FileLinkTTL() > MaxFileLinkTTL {
+		return fmt.Errorf("FILE_LINK_TTL_MINUTES must be between 1 and %d (the S3 signature limit), got %d",
+			int(MaxFileLinkTTL.Minutes()), c.FileLinkTTLMinutes)
+	}
+	// A signed link is built by the S3 client itself as <endpoint>/<bucket>/<key>,
+	// and the signature covers that host and path — so the public address the
+	// browser uses has to BE <endpoint>/<bucket>. A value that does not end in the
+	// bucket name would be signed for one URL and requested at another, and the
+	// storage would answer every link with SignatureDoesNotMatch.
+	if !strings.HasSuffix(c.S3PublicBaseURL, "/"+c.S3Bucket) {
+		return fmt.Errorf(
+			"S3_PUBLIC_BASE_URL must end in /%s when FILE_VISIBILITY=private (signed links are "+
+				"<public endpoint>/<bucket>/<key>), got %q", c.S3Bucket, c.S3PublicBaseURL)
+	}
+	return nil
+}
 
 // DatabaseURL builds a libpq-style connection string for pgx.
 func (c *Config) DatabaseURL() string {
@@ -124,6 +178,10 @@ func Load() (*Config, error) {
 	// the configured value would produce "//key" — a link that 404s on some
 	// gateways and defeats caching on the rest.
 	cfg.S3PublicBaseURL = strings.TrimRight(cfg.S3PublicBaseURL, "/")
+
+	if err := cfg.validateFileLinks(); err != nil {
+		return nil, err
+	}
 
 	// An empty CORS_ORIGIN makes go-chi/cors allow every origin; combined with
 	// AllowCredentials that is unsafe in production, so require an explicit

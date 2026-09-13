@@ -29,6 +29,19 @@ type ProfilePubSub interface {
 	SubscribeForUser(ctx context.Context, userID int32) <-chan sqlc.Profile
 }
 
+// FileLinks turns stored file references into links a browser can use, and back.
+// Implemented by *upload.Service. It exists because a link is not a stored
+// value: in private file mode every read issues a fresh, expiring one.
+type FileLinks interface {
+	// LinkFor is the download URL for an object key, signed when files are private.
+	LinkFor(ctx context.Context, key string) (string, error)
+	// KeyFromLink extracts the object key from a link of ours (signed or not),
+	// reporting false for anything pointing elsewhere — an OIDC picture, say.
+	KeyFromLink(link string) (string, bool)
+	// PermanentLink is the non-expiring form of a key, the one kept in the database.
+	PermanentLink(key string) string
+}
+
 // Enqueuer adds jobs to the background queue (wired in the queue phase).
 type Enqueuer interface {
 	AddTestJob(ctx context.Context, message string) error
@@ -45,5 +58,6 @@ type Resolver struct {
 	PubSub   ProfilePubSub
 	Queue    Enqueuer
 	I18n     Translator
+	Files    FileLinks
 	Log      *slog.Logger
 }

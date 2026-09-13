@@ -90,20 +90,24 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 		return nil, err
 	}
 
+	// Uploads. Built before the resolvers: a profile avatar is a file, and the
+	// resolver asks this service for the link to serve it under.
+	uploadSvc, err := upload.New(cfg, database.Queries)
+	if err != nil {
+		app.Close()
+		return nil, err
+	}
+
 	// GraphQL.
 	res := &resolver.Resolver{
 		Profiles: profiles,
 		PubSub:   pubsub,
 		Queue:    queueClient,
 		I18n:     translator,
+		Files:    uploadSvc,
 		Log:      log,
 	}
 	gqlHandler := graph.NewHandler(res, authMW, cfg.IsProduction(), cfg.CORSOrigin)
-	uploadSvc, err := upload.New(cfg, database.Queries)
-	if err != nil {
-		app.Close()
-		return nil, err
-	}
 
 	mountRoutes(srv.Router(), routeDeps{
 		live:       health.Live(),

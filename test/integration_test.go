@@ -89,7 +89,7 @@ func TestMain(m *testing.M) {
 	s3Host, _ := s3C.Host(ctx)
 	s3Port, _ := s3C.MappedPort(ctx, "9000/tcp")
 	s3Addr := net.JoinHostPort(s3Host, s3Port.Port())
-	must(createPublicBucket(ctx, s3Addr))
+	must(createBucket(ctx, s3Addr))
 	publicBaseURL = "http://" + s3Addr + "/" + s3Bucket
 
 	setenv(map[string]string{
@@ -115,6 +115,9 @@ func TestMain(m *testing.M) {
 		"S3_SECRET_ACCESS_KEY": s3RootPass,
 		"S3_BUCKET":            s3Bucket,
 		"S3_PUBLIC_BASE_URL":   publicBaseURL,
+		// Files are private (the default): the bucket refuses anonymous readers
+		// and the API hands out links signed for this long.
+		"FILE_LINK_TTL_MINUTES": "5",
 		// Explicit allowlist, as in production: it drives both CORS and the
 		// WebSocket handshake authorization. Left empty, every origin is allowed
 		// and the origin checks below would prove nothing.
@@ -188,8 +191,9 @@ func TestGraphQL_AddTestJob(t *testing.T) {
 
 // TestC5_UploadedFileIsReadableFromObjectStorage pins the replica-independent
 // storage: POST /upload puts the file in the shared bucket and answers with an
-// absolute link into that storage, which anyone fetches without this app in the
-// path — so a file written by one replica is readable by all of them.
+// absolute SIGNED link into that storage, which anyone fetches without this app
+// in the path — so a file written by one replica is readable by all of them.
+// The door on that same file is tested right below.
 func TestC5_UploadedFileIsReadableFromObjectStorage(t *testing.T) {
 	// minimal PNG
 	png := []byte("\x89PNG\r\n\x1a\nfakepngdata")
@@ -214,15 +218,103 @@ func TestC5_UploadedFileIsReadableFromObjectStorage(t *testing.T) {
 	require.True(t, strings.HasPrefix(link, publicBaseURL+"/"),
 		"the link must address the storage, not this app: %q", link)
 	require.NotContains(t, link, server.URL, "the app must not be in the download path")
+	require.Contains(t, link, "X-Amz-Signature=", "private files are handed out as signed links")
+	require.Contains(t, link, "X-Amz-Expires=300", "the link expires per FILE_LINK_TTL_MINUTES")
+	require.Equal(t, strings.TrimPrefix(strings.Split(link, "?")[0], publicBaseURL+"/"), saved[0]["key"],
+		"the response also carries the permanent key the link was signed for")
 
-	// Anonymous download, no credentials and no app involved.
+	// Download with no credentials of our own — the signature in the URL is the
+	// whole authorisation, and no copy of the app is in the path.
 	dl, err := http.Get(link)
 	require.NoError(t, err)
 	defer dl.Body.Close()
-	require.Equal(t, http.StatusOK, dl.StatusCode, "the stored object must be publicly readable")
+	require.Equal(t, http.StatusOK, dl.StatusCode, "a signed link must serve the object")
 	body, err := io.ReadAll(dl.Body)
 	require.NoError(t, err)
 	require.Equal(t, png, body, "the object must be byte-identical to the upload")
+}
+
+// The door test: in private mode (the default) the SAME file, asked for without
+// the signature, is refused by the storage. If a future change opens the bucket
+// to anonymous reads — or drops the signing and hands out permanent links — this
+// goes red, which is the only way that regression is ever noticed.
+func TestFilesArePrivate_UnsignedRequestIsRefused(t *testing.T) {
+	png := []byte("\x89PNG\r\n\x1a\nfakepngdata")
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	part, _ := createImagePart(w, "file", "private.png")
+	_, _ = part.Write(png)
+	_ = w.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/upload", &buf)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var saved []map[string]string
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&saved))
+	require.Len(t, saved, 1)
+
+	// The permanent address of the very file just uploaded: same URL, signature
+	// removed. This is what a leaked link looks like once it has expired, and
+	// what someone guessing keys would try.
+	unsigned := publicBaseURL + "/" + saved[0]["key"]
+	dl, err := http.Get(unsigned)
+	require.NoError(t, err)
+	defer dl.Body.Close()
+	require.Equal(t, http.StatusForbidden, dl.StatusCode,
+		"an unauthenticated, unsigned request for a private file must be refused")
+
+	// And the signed link to the same object still works, so the refusal above
+	// is the missing signature — not a broken upload.
+	ok, err := http.Get(saved[0]["path"])
+	require.NoError(t, err)
+	defer ok.Body.Close()
+	require.Equal(t, http.StatusOK, ok.StatusCode)
+}
+
+// The avatar a client stores is the permanent key form, and every read hands
+// back a freshly signed link for it — a stored signature would expire.
+func TestFilesArePrivate_AvatarIsReSignedOnEveryRead(t *testing.T) {
+	png := []byte("\x89PNG\r\n\x1a\nfakepngdata")
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	part, _ := createImagePart(w, "file", "avatar.png")
+	_, _ = part.Write(png)
+	_ = w.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/upload", &buf)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	var saved []map[string]string
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&saved))
+
+	// Hand the signed link straight back, the way a browser client does.
+	data := gql(t, `mutation($i:ProfileUpdateInput!){updateProfile(input:$i){avatarUrl}}`,
+		map[string]any{"i": map[string]any{"avatarUrl": saved[0]["path"]}}, nil)
+	updated := data["updateProfile"].(map[string]any)["avatarUrl"].(string)
+	require.Contains(t, updated, "X-Amz-Signature=")
+
+	// Read it back through a later mutation (the mock user's `me` always
+	// re-stamps its own avatar, so it cannot answer this question). The value
+	// that survived the round trip is the permanent one, signed again on the way
+	// out — a stored signature would have come back stale instead.
+	again := gql(t, `mutation($i:ProfileUpdateInput!){updateProfile(input:$i){avatarUrl}}`,
+		map[string]any{"i": map[string]any{"bio": "unrelated"}}, nil)
+	served := again["updateProfile"].(map[string]any)["avatarUrl"].(string)
+	require.Contains(t, served, "X-Amz-Signature=", "every read signs the link again")
+	require.Equal(t,
+		strings.Split(updated, "?")[0], strings.Split(served, "?")[0],
+		"…for the same object that was uploaded")
+
+	dl, err := http.Get(served)
+	require.NoError(t, err)
+	defer dl.Body.Close()
+	require.Equal(t, http.StatusOK, dl.StatusCode, "the link served with the profile opens the file")
 }
 
 func TestUpload_RejectsNonImage(t *testing.T) {
@@ -356,10 +448,11 @@ func createImagePart(w *multipart.Writer, field, filename string) (io.Writer, er
 	return w.CreatePart(h)
 }
 
-// createPublicBucket creates the uploads bucket and opens it for anonymous
-// reads — the same state the storage init container leaves behind in the
-// deployed stack, and what makes the handed-out links work in a browser.
-func createPublicBucket(ctx context.Context, addr string) error {
+// createBucket creates the uploads bucket and leaves it CLOSED to anonymous
+// readers — the state the storage init container leaves behind in the deployed
+// stack when FILE_VISIBILITY is private, which is the default. The door test
+// below is what makes that closed door a fact rather than an assumption.
+func createBucket(ctx context.Context, addr string) error {
 	cl, err := minio.New(addr, &minio.Options{
 		Creds:  credentials.NewStaticV4(s3RootUser, s3RootPass, ""),
 		Secure: false,
@@ -367,11 +460,7 @@ func createPublicBucket(ctx context.Context, addr string) error {
 	if err != nil {
 		return err
 	}
-	if err := cl.MakeBucket(ctx, s3Bucket, minio.MakeBucketOptions{}); err != nil {
-		return err
-	}
-	return cl.SetBucketPolicy(ctx, s3Bucket, `{"Version":"2012-10-17","Statement":[{"Effect":"Allow",`+
-		`"Principal":{"AWS":["*"]},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::`+s3Bucket+`/*"]}]}`)
+	return cl.MakeBucket(ctx, s3Bucket, minio.MakeBucketOptions{})
 }
 
 func setenv(m map[string]string) {

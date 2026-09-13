@@ -65,6 +65,8 @@ services:
       S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:?set S3_PUBLIC_BASE_URL (public link prefix the browser resolves)}
       S3_BUCKET: ${S3_BUCKET:-uploads}
       S3_USE_SSL: ${S3_USE_SSL:-false}
+      FILE_VISIBILITY: ${FILE_VISIBILITY:-private}
+      FILE_LINK_TTL_MINUTES: ${FILE_LINK_TTL_MINUTES:-15}
       # Per-copy pool: N copies x this must stay under the database's limit.
       DB_POOL_MAX: ${DB_POOL_MAX:-10}
       # How many proxies sit in front; the client address is taken that many

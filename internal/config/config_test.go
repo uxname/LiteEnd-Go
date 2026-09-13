@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -160,4 +161,58 @@ func TestLoad_PoolAndProxyOverridden(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int32(4), cfg.DBPoolMax)
 	require.Equal(t, 2, cfg.TrustedProxyHops)
+}
+
+// --- file links -------------------------------------------------------------
+
+//nolint:paralleltest // setRequiredEnv calls t.Setenv, which rules out t.Parallel
+func TestLoad_FilesArePrivateByDefault(t *testing.T) {
+	setRequiredEnv(t)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, FileVisibilityPrivate, cfg.FileVisibility, "the safe mode is the default one")
+	require.False(t, cfg.FilesArePublic())
+	require.Equal(t, 15*time.Minute, cfg.FileLinkTTL())
+}
+
+func TestLoad_RejectsUnknownFileVisibility(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("FILE_VISIBILITY", "semi-public")
+
+	_, err := Load()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "FILE_VISIBILITY")
+}
+
+// A signed link is <public endpoint>/<bucket>/<key> and the signature covers
+// that path, so a public base that does not end in the bucket produces links
+// the storage refuses — caught at boot, not at the first upload.
+func TestLoad_PrivateModeRequiresBucketInPublicBaseURL(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("S3_PUBLIC_BASE_URL", "http://localhost:3902")
+
+	_, err := Load()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "S3_PUBLIC_BASE_URL")
+
+	// Public mode serves that same address straight from the storage's web
+	// endpoint, where the bucket comes from the host name instead.
+	t.Setenv("FILE_VISIBILITY", FileVisibilityPublic)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.True(t, cfg.FilesArePublic())
+}
+
+func TestLoad_RejectsImpossibleLinkLifetimes(t *testing.T) {
+	for _, ttl := range []string{"0", "-5", "20160"} { // 20160 minutes = 14 days
+		t.Run(ttl, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("FILE_LINK_TTL_MINUTES", ttl)
+
+			_, err := Load()
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "FILE_LINK_TTL_MINUTES")
+		})
+	}
 }

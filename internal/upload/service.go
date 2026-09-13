@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -59,6 +61,20 @@ type objectStore interface {
 		ctx context.Context, bucket, key string, r io.Reader, size int64, opts minio.PutObjectOptions,
 	) (minio.UploadInfo, error)
 	RemoveObject(ctx context.Context, bucket, key string, opts minio.RemoveObjectOptions) error
+	// GetBucketLocation is asked once, to learn the region that goes into a
+	// link's signature. Only the storage knows it ("garage", "us-east-1", a real
+	// AWS region), and this client is the one that can reach it.
+	GetBucketLocation(ctx context.Context, bucket string) (string, error)
+}
+
+// linkSigner is the subset of the S3 client used to sign download links. It is
+// a SECOND client, bound to the address the browser uses, because a SigV4
+// signature covers the host and path it was made for: signing with the internal
+// endpoint (http://garage:3900) would produce links every browser is refused on.
+type linkSigner interface {
+	PresignedGetObject(
+		ctx context.Context, bucket, key string, expiry time.Duration, params url.Values,
+	) (*url.URL, error)
 }
 
 // Service stores uploaded files as objects and records their metadata.
@@ -67,6 +83,17 @@ type Service struct {
 	store     objectStore
 	bucket    string
 	publicURL string
+	// public mirrors config.FilesArePublic: hand out the permanent link instead
+	// of signing a short-lived one.
+	public  bool
+	linkTTL time.Duration
+
+	// Link signing, built on first use. See signer().
+	signerMu       sync.Mutex
+	signer         linkSigner
+	creds          *credentials.Credentials
+	publicEndpoint string
+	publicSecure   bool
 }
 
 // New builds an upload Service backed by the configured object store. A
@@ -75,19 +102,108 @@ type Service struct {
 // to start.
 func New(cfg *config.Config, q Writer) (*Service, error) {
 	endpoint, secure := parseEndpoint(cfg.S3Endpoint, cfg.S3UseSSL)
-	client, err := minio.New(endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(cfg.S3AccessKeyID, cfg.S3SecretAccessKey, ""),
-		Secure: secure,
-	})
+	creds := credentials.NewStaticV4(cfg.S3AccessKeyID, cfg.S3SecretAccessKey, "")
+	client, err := minio.New(endpoint, &minio.Options{Creds: creds, Secure: secure})
 	if err != nil {
 		return nil, fmt.Errorf("build object storage client: %w", err)
 	}
+
+	// The address the BROWSER uses, kept for the signing client built in signer().
+	publicEndpoint, publicSecure := parseEndpoint(cfg.S3PublicBaseURL, cfg.S3UseSSL)
+
 	return &Service{
-		q:         q,
-		store:     client,
-		bucket:    cfg.S3Bucket,
-		publicURL: cfg.S3PublicBaseURL,
+		q:              q,
+		store:          client,
+		bucket:         cfg.S3Bucket,
+		publicURL:      cfg.S3PublicBaseURL,
+		public:         cfg.FilesArePublic(),
+		linkTTL:        cfg.FileLinkTTL(),
+		creds:          creds,
+		publicEndpoint: publicEndpoint,
+		publicSecure:   publicSecure,
 	}, nil
+}
+
+// linkSignerFor returns the client that signs download links, building it the
+// first time one is needed.
+//
+// It is a SECOND client, bound to the address the browser uses, because a SigV4
+// signature covers the host and path it was made for: signing with the internal
+// endpoint (http://garage:3900) would produce links every browser is refused on.
+// It is also built lazily and with an explicit Region, and both of those are the
+// same fact — an S3 client with no region asks the endpoint for the bucket's
+// location before it can sign, and this client's endpoint is the PUBLIC one,
+// which from inside the network usually resolves to nothing (on the scale stand
+// it was a connection refused to localhost:8080 on every upload). So the region
+// is read once through the client that CAN reach the storage, and handed over.
+func (s *Service) linkSignerFor(ctx context.Context) (linkSigner, error) {
+	s.signerMu.Lock()
+	defer s.signerMu.Unlock()
+	if s.signer != nil {
+		return s.signer, nil
+	}
+
+	region, err := s.store.GetBucketLocation(ctx, s.bucket)
+	if err != nil {
+		return nil, fmt.Errorf("read storage region for %q: %w", s.bucket, err)
+	}
+	client, err := minio.New(s.publicEndpoint, &minio.Options{
+		Creds:  s.creds,
+		Secure: s.publicSecure,
+		Region: region,
+		// Path-style addressing, so the signed path is /<bucket>/<key> — exactly
+		// the S3_PUBLIC_BASE_URL + "/" + key that config.validateFileLinks
+		// enforces, and what a proxy in front of it must pass through unchanged.
+		BucketLookup: minio.BucketLookupPath,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build link-signing client: %w", err)
+	}
+	s.signer = client
+	return client, nil
+}
+
+// LinkFor returns the URL a browser downloads the stored object from.
+//
+// In public mode that is the object's permanent link. In private mode (the
+// default) it is a link signed for config.FileLinkTTL: the storage refuses the
+// same URL without the signature, and refuses it again once the signature
+// expires — so the link is handed out fresh on every read rather than stored.
+func (s *Service) LinkFor(ctx context.Context, key string) (string, error) {
+	if s.public {
+		return s.PermanentLink(key), nil
+	}
+	signer, err := s.linkSignerFor(ctx)
+	if err != nil {
+		return "", err
+	}
+	signed, err := signer.PresignedGetObject(ctx, s.bucket, key, s.linkTTL, nil)
+	if err != nil {
+		return "", fmt.Errorf("sign link for %q: %w", key, err)
+	}
+	return signed.String(), nil
+}
+
+// PermanentLink is the object's stable address: the public link prefix plus the
+// key. It is the form kept in the database — a value that names the object
+// without expiring. In private mode the storage refuses this URL as it stands
+// (that is the point); it is the key carrier that LinkFor signs on every read.
+func (s *Service) PermanentLink(key string) string { return s.publicURL + "/" + key }
+
+// KeyFromLink returns the object key a link of ours points at, and whether the
+// link is one of ours at all. It is what turns a link the client hands back
+// (fresh from an upload, signature and all) into the key behind it: a signed
+// link expires, so storing one would store a dead value.
+func (s *Service) KeyFromLink(link string) (string, bool) {
+	key, found := strings.CutPrefix(link, s.publicURL+"/")
+	if !found {
+		return "", false
+	}
+	key, _, _ = strings.Cut(key, "?") // drop the signature query
+	if key == "" {
+		return "", false
+	}
+	return key, true
 }
 
 // parseEndpoint splits the configured storage address into what minio-go wants:
@@ -103,10 +219,14 @@ func parseEndpoint(raw string, useSSL bool) (host string, secure bool) {
 }
 
 // SavedFile is the per-file result returned to the client. Path is the absolute
-// public URL of the stored object: the browser loads it straight from the
-// storage, not through this app.
+// URL the browser downloads the object from — signed and short-lived unless the
+// deployment runs in public file mode — and Key is the object's permanent name,
+// the value to hand back to the API (e.g. as a profile avatar) so a fresh link
+// can be issued on every read. Either way the browser loads the bytes straight
+// from the storage, not through this app.
 type SavedFile struct {
 	Filename string `json:"filename"`
+	Key      string `json:"key"`
 	Path     string `json:"path"`
 	// internal metadata (not serialised in the public response)
 	key              string
@@ -124,16 +244,16 @@ func AllowedMime(mimetype string) bool {
 }
 
 // ProcessFile validates a single uploaded file and returns its metadata,
-// including the key and public URL it will get. The bytes are held until
+// including the key and the download link it will get. The bytes are held until
 // SaveMetadata stores them, so a request rejected while its parts are still
 // being read leaves nothing in the bucket. It returns ErrDisallowedMime if the
 // content-type is not allowed, and ErrFileTooLarge if the body exceeds
 // UploadMaxFileSize.
 //
-// The context is unused: validating and buffering touch nothing cancellable —
-// every remote call of an upload happens in SaveMetadata.
+// Nothing here talks to the storage: validating and buffering are local, and so
+// is signing the link. Every remote call of an upload happens in SaveMetadata.
 func (s *Service) ProcessFile(
-	_ context.Context, originalFilename, mimetype string, body io.Reader,
+	ctx context.Context, originalFilename, mimetype string, body io.Reader,
 ) (*SavedFile, error) {
 	// Cheap early reject on the client-declared content-type before reading on.
 	if !AllowedMime(mimetype) {
@@ -163,9 +283,14 @@ func (s *Service) ProcessFile(
 	}
 
 	key := objectKey(time.Now().UTC(), originalFilename)
+	link, err := s.LinkFor(ctx, key)
+	if err != nil {
+		return nil, err
+	}
 	return &SavedFile{
 		Filename:         path.Base(key),
-		Path:             s.publicURL + "/" + key,
+		Key:              key,
+		Path:             link,
 		key:              key,
 		data:             data,
 		originalFilename: originalFilename,

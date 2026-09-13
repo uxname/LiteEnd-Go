@@ -49,6 +49,32 @@ func (f *fakePubSub) SubscribeForUser(_ context.Context, _ int32) <-chan sqlc.Pr
 	return f.ch
 }
 
+// fakeLinks stands in for *upload.Service: our own links live under
+// storagePrefix, anything else belongs to somebody else.
+type fakeLinks struct {
+	signErr error
+}
+
+const storagePrefix = "https://cdn.example.test/uploads"
+
+func (f fakeLinks) LinkFor(_ context.Context, key string) (string, error) {
+	if f.signErr != nil {
+		return "", f.signErr
+	}
+	return storagePrefix + "/" + key + "?X-Amz-Signature=fake", nil
+}
+
+func (f fakeLinks) KeyFromLink(link string) (string, bool) {
+	key, found := strings.CutPrefix(link, storagePrefix+"/")
+	if !found || key == "" {
+		return "", false
+	}
+	key, _, _ = strings.Cut(key, "?")
+	return key, true
+}
+
+func (f fakeLinks) PermanentLink(key string) string { return storagePrefix + "/" + key }
+
 type fakeEnqueuer struct {
 	calls []string
 	err   error
@@ -420,4 +446,68 @@ func TestUpdateProfile_AcceptsValidHTTPSAvatarURL(t *testing.T) {
 	r := &resolver.Resolver{Profiles: profiles, PubSub: &fakePubSub{}, Log: discardLog()}
 	_, err := r.Mutation().UpdateProfile(userCtx(), model.ProfileUpdateInput{AvatarURL: &good})
 	require.NoError(t, err)
+}
+
+// --- avatars: stored permanently, served signed ---
+
+// The link a client hands back carries a signature that expires, so what gets
+// stored is the permanent form — otherwise the avatar dies with the signature.
+func TestUpdateProfile_StoresThePermanentAvatarLink(t *testing.T) {
+	t.Parallel()
+	var stored *string
+	profiles := fakeProfiles{
+		updateFn: func(_ context.Context, id int32, sub string, in profile.UpdateParams) (sqlc.Profile, error) {
+			stored = in.AvatarURL
+			return sqlc.Profile{ID: id, OidcSub: sub, AvatarUrl: in.AvatarURL}, nil
+		},
+	}
+	r := &resolver.Resolver{Profiles: profiles, PubSub: &fakePubSub{}, Files: fakeLinks{}, Log: discardLog()}
+
+	signed := storagePrefix + "/2026/01/02/03-04/pic.png?X-Amz-Signature=abc&X-Amz-Expires=900"
+	out, err := r.Mutation().UpdateProfile(userCtx(), model.ProfileUpdateInput{AvatarURL: &signed})
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	require.Equal(t, storagePrefix+"/2026/01/02/03-04/pic.png", *stored,
+		"the signature is stripped before the value is stored")
+	require.NotNil(t, out.AvatarURL)
+	require.Contains(t, *out.AvatarURL, "X-Amz-Signature=", "what comes back out is signed again")
+}
+
+func TestUpdateProfile_ForeignAvatarURLIsUntouched(t *testing.T) {
+	t.Parallel()
+	var stored *string
+	profiles := fakeProfiles{
+		updateFn: func(_ context.Context, id int32, sub string, in profile.UpdateParams) (sqlc.Profile, error) {
+			stored = in.AvatarURL
+			return sqlc.Profile{ID: id, OidcSub: sub, AvatarUrl: in.AvatarURL}, nil
+		},
+	}
+	r := &resolver.Resolver{Profiles: profiles, PubSub: &fakePubSub{}, Files: fakeLinks{}, Log: discardLog()}
+
+	external := "https://i.pravatar.cc/300"
+	out, err := r.Mutation().UpdateProfile(userCtx(), model.ProfileUpdateInput{AvatarURL: &external})
+	require.NoError(t, err)
+	require.Equal(t, &external, stored, "a URL that is not ours is stored as it is")
+	require.Equal(t, &external, out.AvatarURL, "…and served as it is")
+}
+
+// A storage that cannot sign must not take the whole profile read down with it.
+func TestUpdateProfile_UnsignableAvatarIsOmitted(t *testing.T) {
+	t.Parallel()
+	profiles := fakeProfiles{
+		updateFn: func(_ context.Context, id int32, sub string, in profile.UpdateParams) (sqlc.Profile, error) {
+			return sqlc.Profile{ID: id, OidcSub: sub, AvatarUrl: in.AvatarURL}, nil
+		},
+	}
+	r := &resolver.Resolver{
+		Profiles: profiles,
+		PubSub:   &fakePubSub{},
+		Files:    fakeLinks{signErr: errors.New("no credentials")},
+		Log:      discardLog(),
+	}
+
+	stored := storagePrefix + "/2026/01/02/03-04/pic.png"
+	out, err := r.Mutation().UpdateProfile(userCtx(), model.ProfileUpdateInput{AvatarURL: &stored})
+	require.NoError(t, err)
+	require.Nil(t, out.AvatarURL, "an unsignable avatar is left out, the profile still reads")
 }

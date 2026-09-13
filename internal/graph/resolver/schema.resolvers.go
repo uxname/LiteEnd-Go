@@ -29,7 +29,7 @@ func (r *mutationResolver) UpdateProfile(ctx context.Context, input model.Profil
 		return nil, err
 	}
 	updated, err := r.Profiles.Update(ctx, user.ID, user.OidcSub, profile.UpdateParams{
-		AvatarURL:   input.AvatarURL,
+		AvatarURL:   r.storedAvatar(input.AvatarURL),
 		DisplayName: input.DisplayName,
 		Bio:         input.Bio,
 	})
@@ -41,7 +41,7 @@ func (r *mutationResolver) UpdateProfile(ctx context.Context, input model.Profil
 			r.Log.Warn("publish profileUpdated failed", "error", err)
 		}
 	}
-	return toModelProfile(updated), nil
+	return r.toModelProfile(ctx, updated), nil
 }
 
 // AddTestJob is the resolver for the addTestJob field.
@@ -72,7 +72,7 @@ func (r *queryResolver) Me(ctx context.Context) (*model.Profile, error) {
 	if err != nil {
 		return nil, err
 	}
-	return toModelProfile(*user), nil
+	return r.toModelProfile(ctx, *user), nil
 }
 
 // TestTranslation is the resolver for the testTranslation field (ADMIN only).
@@ -149,7 +149,7 @@ func (r *subscriptionResolver) ProfileUpdated(ctx context.Context) (<-chan *mode
 		}()
 		for p := range src {
 			select {
-			case out <- toModelProfile(p):
+			case out <- r.toModelProfile(ctx, p):
 			case <-ctx.Done():
 				return
 			}

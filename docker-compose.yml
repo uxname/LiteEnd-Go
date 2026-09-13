@@ -83,6 +83,8 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis}
       S3_BUCKET: ${S3_BUCKET:-uploads}
       S3_USE_SSL: ${S3_USE_SSL:-false}
+      FILE_VISIBILITY: ${FILE_VISIBILITY:-private}
+      FILE_LINK_TTL_MINUTES: ${FILE_LINK_TTL_MINUTES:-15}
       OIDC_MOCK_ENABLED: ${OIDC_MOCK_ENABLED:-true}
       # Host ports of the dashboards — rendered as links on /dev.
       DB_STUDIO_PORT: ${DB_STUDIO_PORT:-5100}
@@ -201,6 +203,7 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY}
       S3_BUCKET: ${S3_BUCKET:-uploads}
       S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:?set S3_PUBLIC_BASE_URL (public link prefix the browser resolves)}
+      FILE_VISIBILITY: ${FILE_VISIBILITY:-private}
     configs:
       - source: garage
         target: /etc/garage.toml
@@ -241,15 +244,26 @@ services:
         garage bucket info "$$S3_BUCKET" >/dev/null 2>&1 || garage bucket create "$$S3_BUCKET"
         garage bucket allow --read --write "$$S3_BUCKET" --key "$$S3_ACCESS_KEY_ID"
 
-        # Public read. Garage refuses anonymous requests on the S3 API outright
-        # ("Garage does not support anonymous access yet"), so public links are
-        # served by the web endpoint, which picks the bucket from the Host
-        # header — hence the alias on the host of S3_PUBLIC_BASE_URL, derived
-        # from it here rather than kept in a second variable that could drift.
-        garage bucket website --allow "$$S3_BUCKET"
-        web_host=$$(echo "$$S3_PUBLIC_BASE_URL" | sed -e 's|^[a-zA-Z][a-zA-Z0-9+.-]*://||' -e 's|[:/].*$$||')
-        [ "$$web_host" = "$$S3_BUCKET" ] || garage bucket alias "$$S3_BUCKET" "$$web_host"
-        echo "garage ready: bucket $$S3_BUCKET served publicly as host $$web_host"
+        # Anonymous read, and only when FILE_VISIBILITY says so. Garage refuses
+        # anonymous requests on the S3 API outright ("Garage does not support
+        # anonymous access yet"), so public links are served by the web endpoint,
+        # which picks the bucket from the Host header — hence the alias on the
+        # host of S3_PUBLIC_BASE_URL, derived from it here rather than kept in a
+        # second variable that could drift.
+        #
+        # In the default private mode the door stays shut: no website, no alias,
+        # and the app hands out signed S3-API links instead. This runs on every
+        # `up`, so flipping the variable and bringing the stack up again is all
+        # it takes to open or close the bucket.
+        if [ "$${FILE_VISIBILITY:-private}" = "public" ]; then
+          garage bucket website --allow "$$S3_BUCKET"
+          web_host=$$(echo "$$S3_PUBLIC_BASE_URL" | sed -e 's|^[a-zA-Z][a-zA-Z0-9+.-]*://||' -e 's|[:/].*$$||')
+          [ "$$web_host" = "$$S3_BUCKET" ] || garage bucket alias "$$S3_BUCKET" "$$web_host"
+          echo "garage ready: bucket $$S3_BUCKET served publicly as host $$web_host"
+        else
+          garage bucket website --deny "$$S3_BUCKET"
+          echo "garage ready: bucket $$S3_BUCKET is private — files are served through signed links only"
+        fi
 
   # ---- Admin dashboards (internal only; exposed via the auth proxy below) ----
 

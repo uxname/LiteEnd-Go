@@ -36,11 +36,15 @@ the repo. `docker-compose.yml` declares all four at the bottom:
 Do **not** bind-mount Postgres/Redis data into the repo: root-owned `0700` files
 under `./data` break `go test ./...`.
 
-Uploaded files go to S3-compatible object storage (minio-go client). The link the
-API returns is public, permanent, and points **straight at the storage** — the app
-never serves file bytes, and there is no download route to break. Dev and the
-scale stand run a [Garage](https://garagehq.deuxfleurs.fr) for this, initialized on
-`up` by a `garage-init` container (layout, access key, bucket — no manual step).
+Uploaded files go to S3-compatible object storage (minio-go client), and the link
+the API returns points **straight at the storage** — the app never serves file
+bytes, and there is no download route to break. What that link IS depends on
+`FILE_VISIBILITY`: private (the default) means a **signed** link that expires
+after `FILE_LINK_TTL_MINUTES`, against a bucket closed to anonymous readers;
+public means the permanent link ADR-0002 used to hand out, against an open
+bucket. Dev and the scale stand run a [Garage](https://garagehq.deuxfleurs.fr)
+for this, initialized on `up` by a `garage-init` container (layout, access key,
+bucket, and opening or closing it to match the mode — no manual step).
 That initializer needs **Docker Engine 27.4+**: it mounts the Garage binary out of
 the Garage image (`type: image`), the only way to run a CLI from an image built
 `FROM scratch`.
@@ -135,8 +139,22 @@ Four variables deserve special care:
 Storage (`S3_*`) has one trap worth stating: **`S3_ENDPOINT` and
 `S3_PUBLIC_BASE_URL` are two different addresses of the same bucket** — the first
 as the app reaches it from inside the network, the second as the browser resolves
-it from outside, bucket name included. A file's URL is the second value plus `/`
-plus the object key, and that string is what lands in the database.
+it from outside, bucket name included. A file's permanent address is the second
+value plus `/` plus the object key, and that string is what lands in the database.
+
+Two more (`FILE_*`), and they are a security setting, not a tuning knob:
+
+| Variable | What it does |
+|---|---|
+| `FILE_VISIBILITY` (default `private`) | `private`: the bucket refuses anonymous readers and every download needs a link the API signed. `public`: the bucket is world-readable and links never expire. The value also decides what `garage-init` does to the bucket, so changing it is a variable **and** an `up -d`. |
+| `FILE_LINK_TTL_MINUTES` (default 15) | How long a signed link lives, 1…10080 (the S3 signature limit). A link is a bearer token for one object: keep it about as long as a page needs to load the image. |
+
+In private mode `S3_PUBLIC_BASE_URL` must be `<public S3 API address>/<bucket>`,
+because a signed link is that prefix plus the key and a SigV4 signature covers
+the host and path it was made for. The app refuses to boot otherwise, and any
+proxy in front of the bucket must pass `/<bucket>/*` through **unchanged** — a
+rewritten path or `Host` turns every link into `SignatureDoesNotMatch`. Why files
+are private at all: [ADR-0003](../docs/adr/0003-files-are-private-and-served-through-signed-links.md).
 
 ## The proxy in front of the app
 
