@@ -68,9 +68,12 @@ type Config struct {
 	// It is a deployment decision, not a per-file one: see docs/adr/0003.
 	FileVisibility string `env:"FILE_VISIBILITY" envDefault:"private"`
 	// FileLinkTTLMinutes is how long a signed link stays valid. Only read in
-	// private mode. Keep it short — the link is a bearer token for that one
-	// object, and anything holding it can read the file until it expires.
-	FileLinkTTLMinutes int `env:"FILE_LINK_TTL_MINUTES" envDefault:"15"`
+	// private mode. The link is a bearer token for that one object, so shorter is
+	// safer — but a link that dies while the page holding it is still on screen
+	// is a broken image, and the default is picked for that side of the trade:
+	// an hour outlives a cached page, a lazily-scrolled list and a coffee break.
+	// Lower it when the files are worth more than the convenience.
+	FileLinkTTLMinutes int `env:"FILE_LINK_TTL_MINUTES" envDefault:"60"`
 
 	// OIDC
 	OIDCIssuer      string `env:"OIDC_ISSUER,required"`

@@ -32,8 +32,8 @@ safe one, and the unsafe one has to be a sentence the operator writes on purpose
 
 - `private` — the bucket refuses anonymous readers, and the API hands out a **signed**
   link (S3 SigV4 presigned GET) that stops working after `FILE_LINK_TTL_MINUTES`
-  (default 15, capped at the 7-day signature limit). A URL that leaks stops being useful
-  in minutes.
+  (default 60, capped at the 7-day signature limit). A URL that leaks stops being useful
+  within the hour.
 - `public` — the bucket is world-readable and links are permanent, exactly the ADR-0002
   behaviour. Simpler, cacheable, and appropriate when the files genuinely are public.
 
@@ -87,9 +87,26 @@ warns on `public`.
   produces a new URL for the same bytes, so a browser cache keyed on the URL misses. The
   bytes are still cached by the storage's own headers within a link's lifetime; a product
   that needs long-lived public caching should say so with `FILE_VISIBILITY=public`.
-- **Server-side rendering of a private file link is short-lived by construction.** An HTML
-  page cached for longer than `FILE_LINK_TTL_MINUTES` will carry dead image URLs. Keep the
-  lifetime above the page cache, or render such images client-side.
+- **A link has to outlive the page that shows it, and nothing enforces that.** An HTML
+  page cached for longer than `FILE_LINK_TTL_MINUTES` carries dead image URLs, and so does
+  a long lazily-scrolled list whose links were all signed when the page loaded. The
+  failure is silent on our side — the storage refuses a request the app never saw. The
+  default is an hour for exactly this reason, which covers a cached page, a scrolled list
+  and an idle tab.
+
+  **The rule, for whoever turns SSR on next:** a page rendered on the server with a
+  private file link in it must either be cached for less than `FILE_LINK_TTL_MINUTES`, or
+  fetch that link in the browser instead (in this template `/account` is `ssr: false` and
+  urql runs `cache-and-network`, so every mount brings a fresh link — that is not an
+  accident to undo lightly). A product that genuinely needs a cacheable, long-lived URL
+  wants the alternative below, not a longer lifetime.
+
+  **The alternative, when a longer lifetime stops being enough:** a stable route on the
+  API — `GET /files/<key>` — that checks the caller and answers `302` to a link signed on
+  the spot. The URL in the HTML never expires and stays cacheable, the signature is always
+  fresh, and access becomes revocable. It costs the app a place in the request path again
+  (headers only — the bytes still come from the storage), which is why it is not what this
+  ADR decided; the signal to build it is the first file that is worth more than an avatar.
 - **The signing key is the deployment's S3 credential.** Anything that can sign can grant
   access to any object in the bucket. That was already true of the app's write access; it
   now also grants reads, so the credential's blast radius is the whole bucket.

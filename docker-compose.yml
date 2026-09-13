@@ -84,7 +84,7 @@ services:
       S3_BUCKET: ${S3_BUCKET:-uploads}
       S3_USE_SSL: ${S3_USE_SSL:-false}
       FILE_VISIBILITY: ${FILE_VISIBILITY:-private}
-      FILE_LINK_TTL_MINUTES: ${FILE_LINK_TTL_MINUTES:-15}
+      FILE_LINK_TTL_MINUTES: ${FILE_LINK_TTL_MINUTES:-60}
       OIDC_MOCK_ENABLED: ${OIDC_MOCK_ENABLED:-true}
       # Host ports of the dashboards — rendered as links on /dev.
       DB_STUDIO_PORT: ${DB_STUDIO_PORT:-5100}

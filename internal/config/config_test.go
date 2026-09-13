@@ -173,7 +173,8 @@ func TestLoad_FilesArePrivateByDefault(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, FileVisibilityPrivate, cfg.FileVisibility, "the safe mode is the default one")
 	require.False(t, cfg.FilesArePublic())
-	require.Equal(t, 15*time.Minute, cfg.FileLinkTTL())
+	require.Equal(t, time.Hour, cfg.FileLinkTTL(),
+		"the default link lifetime has to outlive the page that shows the file")
 }
 
 func TestLoad_RejectsUnknownFileVisibility(t *testing.T) {

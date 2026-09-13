@@ -147,7 +147,7 @@ Two more (`FILE_*`), and they are a security setting, not a tuning knob:
 | Variable | What it does |
 |---|---|
 | `FILE_VISIBILITY` (default `private`) | `private`: the bucket refuses anonymous readers and every download needs a link the API signed. `public`: the bucket is world-readable and links never expire. The value also decides what `garage-init` does to the bucket, so changing it is a variable **and** an `up -d`. |
-| `FILE_LINK_TTL_MINUTES` (default 15) | How long a signed link lives, 1…10080 (the S3 signature limit). A link is a bearer token for one object: keep it about as long as a page needs to load the image. |
+| `FILE_LINK_TTL_MINUTES` (default 60) | How long a signed link lives, 1…10080 (the S3 signature limit). A link is a bearer token for one object, so shorter is safer — but it must outlive the page holding it, or the user sees a broken image. An hour covers a cached page, a long lazily-loaded list and an idle tab. |
 
 In private mode `S3_PUBLIC_BASE_URL` must be `<public S3 API address>/<bucket>`,
 because a signed link is that prefix plus the key and a SigV4 signature covers
