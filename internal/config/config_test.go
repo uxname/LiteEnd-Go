@@ -197,8 +197,17 @@ func TestLoad_PrivateModeRequiresBucketInPublicBaseURL(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "S3_PUBLIC_BASE_URL")
 
+	// A prefix that merely ENDS in the bucket is not enough either: the signing
+	// client keeps only the host, so the extra "/files" would never appear in a
+	// signed link and every avatar would 404 at an address nobody can debug.
+	t.Setenv("S3_PUBLIC_BASE_URL", "http://localhost:3902/files/uploads")
+	_, err = Load()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "S3_PUBLIC_BASE_URL")
+
 	// Public mode serves that same address straight from the storage's web
 	// endpoint, where the bucket comes from the host name instead.
+	t.Setenv("S3_PUBLIC_BASE_URL", "http://localhost:3902")
 	t.Setenv("FILE_VISIBILITY", FileVisibilityPublic)
 	cfg, err := Load()
 	require.NoError(t, err)

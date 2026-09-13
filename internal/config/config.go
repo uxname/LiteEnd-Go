@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -118,15 +119,25 @@ func (c *Config) validateFileLinks() error {
 		return fmt.Errorf("FILE_LINK_TTL_MINUTES must be between 1 and %d (the S3 signature limit), got %d",
 			int(MaxFileLinkTTL.Minutes()), c.FileLinkTTLMinutes)
 	}
-	// A signed link is built by the S3 client itself as <endpoint>/<bucket>/<key>,
+	// A signed link is built by the S3 client itself as <host>/<bucket>/<key>,
 	// and the signature covers that host and path — so the public address the
-	// browser uses has to BE <endpoint>/<bucket>. A value that does not end in the
-	// bucket name would be signed for one URL and requested at another, and the
-	// storage would answer every link with SignatureDoesNotMatch.
-	if !strings.HasSuffix(c.S3PublicBaseURL, "/"+c.S3Bucket) {
+	// browser uses has to BE <host>/<bucket>, exactly. The signing client keeps
+	// only the HOST of this value (minio-go takes a host, not a URL), so a deeper
+	// prefix such as https://example.com/files/uploads is silently dropped: links
+	// would be signed for /uploads/<key> and the browser would ask for a path
+	// that does not exist. Ending in the bucket name is therefore not enough —
+	// the path has to be nothing but the bucket.
+	u, err := url.Parse(c.S3PublicBaseURL)
+	if err != nil || u.Host == "" {
 		return fmt.Errorf(
-			"S3_PUBLIC_BASE_URL must end in /%s when FILE_VISIBILITY=private (signed links are "+
-				"<public endpoint>/<bucket>/<key>), got %q", c.S3Bucket, c.S3PublicBaseURL)
+			"S3_PUBLIC_BASE_URL must be an absolute http(s) URL when FILE_VISIBILITY=private, got %q",
+			c.S3PublicBaseURL)
+	}
+	if u.Path != "/"+c.S3Bucket {
+		return fmt.Errorf(
+			"S3_PUBLIC_BASE_URL must be exactly <public S3 API address>/%s when FILE_VISIBILITY=private "+
+				"(signed links are <public endpoint>/<bucket>/<key>, and only the host of this value is "+
+				"used to sign them), got %q", c.S3Bucket, c.S3PublicBaseURL)
 	}
 	return nil
 }

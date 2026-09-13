@@ -109,7 +109,11 @@ func New(cfg *config.Config, q Writer) (*Service, error) {
 	}
 
 	// The address the BROWSER uses, kept for the signing client built in signer().
-	publicEndpoint, publicSecure := parseEndpoint(cfg.S3PublicBaseURL, cfg.S3UseSSL)
+	// TLS comes from this value's OWN scheme, never from S3_USE_SSL: that flag
+	// describes the internal endpoint, and an https storage behind an http proxy
+	// (or the reverse) is an ordinary deployment. Signing with the wrong scheme
+	// hands the browser a link on a port nothing is listening on.
+	publicEndpoint, publicSecure := parseEndpoint(cfg.S3PublicBaseURL, false)
 
 	return &Service{
 		q:              q,
@@ -200,7 +204,15 @@ func (s *Service) KeyFromLink(link string) (string, bool) {
 		return "", false
 	}
 	key, _, _ = strings.Cut(key, "?") // drop the signature query
-	if key == "" {
+	// The key arrives from a client and is about to be signed with OUR
+	// credentials, so anything that is not a plain key under the bucket is
+	// refused: minio-go accepts "../x" as an object name, and a proxy that
+	// normalises the path would aim the request at a sibling bucket.
+	//
+	// ponytail: shape only. It does NOT check the key belongs to the caller —
+	// anyone holding a key can still have a fresh link signed for it. Add an
+	// uploads-table ownership lookup here when files stop being avatars.
+	if key == "" || strings.HasPrefix(key, "/") || strings.Contains(key, "..") {
 		return "", false
 	}
 	return key, true
@@ -250,8 +262,9 @@ func AllowedMime(mimetype string) bool {
 // content-type is not allowed, and ErrFileTooLarge if the body exceeds
 // UploadMaxFileSize.
 //
-// Nothing here talks to the storage: validating and buffering are local, and so
-// is signing the link. Every remote call of an upload happens in SaveMetadata.
+// Storing the bytes happens in SaveMetadata; the only call out of here is the
+// one-off region lookup the first signed link of a process needs (see
+// linkSignerFor) — every later call signs locally.
 func (s *Service) ProcessFile(
 	ctx context.Context, originalFilename, mimetype string, body io.Reader,
 ) (*SavedFile, error) {

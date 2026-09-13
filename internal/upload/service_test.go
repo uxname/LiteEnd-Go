@@ -481,3 +481,21 @@ func TestLinkFor_BuildsTheSignerFromTheStorageRegion(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "read storage region")
 }
+
+// The avatar a client hands back is the only path by which an outsider names a
+// key we then sign with our own credentials, so a key that is not a plain name
+// under the bucket must not survive the trip.
+func TestKeyFromLink_RefusesKeysThatEscapeTheBucket(t *testing.T) {
+	t.Parallel()
+	s, _ := newSvc(t)
+
+	for _, link := range []string{
+		testPublicURL + "/../other-bucket/secret.sql",
+		testPublicURL + "/2026/../../other-bucket/secret.sql",
+		testPublicURL + "//etc/passwd",
+		testPublicURL + "/?X-Amz-Signature=abc",
+	} {
+		_, ours := s.KeyFromLink(link)
+		require.False(t, ours, "must not sign a link for %q", link)
+	}
+}
