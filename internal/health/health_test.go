@@ -128,3 +128,32 @@ func TestC9_ReadyIgnoresHeapButFollowsDependencies(t *testing.T) {
 	require.Equal(t, statusError, resp.Status)
 	require.Equal(t, statusError, resp.Checks["database"].Status)
 }
+
+func TestC6_RequestIDPropagation(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Live sets X-Request-Id header from request", func(t *testing.T) {
+		t.Parallel()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/livez", nil)
+		req.Header.Set("X-Request-Id", "test-live-trace-123")
+
+		Live().ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Equal(t, "test-live-trace-123", rec.Header().Get("X-Request-Id"))
+	})
+
+	t.Run("Ready sets X-Request-Id header from request", func(t *testing.T) {
+		t.Parallel()
+		c := New(fakePinger{}, fakePinger{})
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+		req.Header.Set("X-Request-Id", "test-ready-trace-456")
+
+		c.Ready().ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Equal(t, "test-ready-trace-456", rec.Header().Get("X-Request-Id"))
+	})
+}

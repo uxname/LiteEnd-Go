@@ -20,6 +20,8 @@ import (
 	"net/http"
 	"runtime/metrics"
 
+	chimw "github.com/go-chi/chi/v5/middleware"
+
 	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/logger"
 )
@@ -71,11 +73,26 @@ type response struct {
 // `"status":"ok"`.
 const livePayload = `{"status":"ok"}`
 
+// writeRequestID writes the request ID from context or request header into response headers.
+func writeRequestID(w http.ResponseWriter, r *http.Request) {
+	if r == nil {
+		return
+	}
+	reqID := chimw.GetReqID(r.Context())
+	if reqID == "" {
+		reqID = r.Header.Get("X-Request-Id")
+	}
+	if reqID != "" {
+		w.Header().Set("X-Request-Id", reqID)
+	}
+}
+
 // Live returns the liveness handler: it reports that the process is running and
 // nothing else. It is a package-level function, not a Checker method, so that
 // the handler has no dependency in reach to start pinging.
 func Live() http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeRequestID(w, r)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, livePayload)
 	}
@@ -89,6 +106,7 @@ func Live() http.HandlerFunc {
 // alongside them but never judged — see the comment in the body.
 func (c *Checker) Ready() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		writeRequestID(w, r)
 		ctx, cancel := context.WithTimeout(r.Context(), config.HealthCheckTimeout)
 		defer cancel()
 
