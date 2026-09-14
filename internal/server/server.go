@@ -39,6 +39,14 @@ func New(cfg *config.Config, log *slog.Logger, rdb *redis.Client) *Server {
 	// the access log runs, so the worst failures are the ones you can still find
 	// by method/path/status.
 	r.Use(chimw.RequestID)
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if reqID := chimw.GetReqID(r.Context()); reqID != "" {
+				w.Header().Set("X-Request-Id", reqID)
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
 	r.Use(appmw.ContextLogger(log))           // request-scoped logger (request_id) for logger.From(ctx)
 	r.Use(appmw.RealIP(cfg.TrustedProxyHops)) // client address from X-Forwarded-For
 	r.Use(appmw.RequestLogger(log))
@@ -52,6 +60,7 @@ func New(cfg *config.Config, log *slog.Logger, rdb *redis.Client) *Server {
 		AllowedOrigins:   cfg.CORSOrigin,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Accept-Language", "x-mock-sub"},
+		ExposedHeaders:   []string{"X-Request-Id"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))

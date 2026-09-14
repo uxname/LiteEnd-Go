@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"runtime/metrics"
+	"strings"
 
 	chimw "github.com/go-chi/chi/v5/middleware"
 
@@ -75,12 +76,12 @@ const livePayload = `{"status":"ok"}`
 
 // writeRequestID writes the request ID from context or request header into response headers.
 func writeRequestID(w http.ResponseWriter, r *http.Request) {
-	if r == nil {
+	if r == nil || w == nil {
 		return
 	}
-	reqID := chimw.GetReqID(r.Context())
+	reqID := strings.TrimSpace(chimw.GetReqID(r.Context()))
 	if reqID == "" {
-		reqID = r.Header.Get("X-Request-Id")
+		reqID = strings.TrimSpace(r.Header.Get("X-Request-Id"))
 	}
 	if reqID != "" {
 		w.Header().Set("X-Request-Id", reqID)
@@ -106,6 +107,9 @@ func Live() http.HandlerFunc {
 // alongside them but never judged — see the comment in the body.
 func (c *Checker) Ready() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r == nil {
+			return
+		}
 		writeRequestID(w, r)
 		ctx, cancel := context.WithTimeout(r.Context(), config.HealthCheckTimeout)
 		defer cancel()

@@ -100,3 +100,30 @@ func TestRouter_NotFoundLogsAtWarn(t *testing.T) {
 	require.Equal(t, slog.LevelWarn.String(), reqLine["level"])
 	require.Equal(t, http.StatusNotFound, intField(t, reqLine, "status"))
 }
+
+func TestRouter_PropagatesRequestIDHeader(t *testing.T) {
+	t.Parallel()
+
+	srv := New(&config.Config{Env: "test", CORSOrigin: []string{"http://localhost:3000"}}, slog.Default(), nil)
+	srv.Router().Get("/ping", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	t.Run("generates request id if missing", func(t *testing.T) {
+		t.Parallel()
+		rec := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ping", nil))
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.NotEmpty(t, rec.Header().Get("X-Request-Id"))
+	})
+
+	t.Run("preserves incoming request id", func(t *testing.T) {
+		t.Parallel()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+		req.Header.Set("X-Request-Id", "trace-client-id-777")
+		srv.Router().ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Equal(t, "trace-client-id-777", rec.Header().Get("X-Request-Id"))
+	})
+}
