@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -125,5 +126,17 @@ func TestRouter_PropagatesRequestIDHeader(t *testing.T) {
 		srv.Router().ServeHTTP(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
 		require.Equal(t, "trace-client-id-777", rec.Header().Get("X-Request-Id"))
+	})
+
+	t.Run("truncates incoming request id longer than 128 characters", func(t *testing.T) {
+		t.Parallel()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+		longID := strings.Repeat("b", 200)
+		req.Header.Set("X-Request-Id", longID)
+		srv.Router().ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Len(t, rec.Header().Get("X-Request-Id"), 128)
+		require.Equal(t, strings.Repeat("b", 128), rec.Header().Get("X-Request-Id"))
 	})
 }

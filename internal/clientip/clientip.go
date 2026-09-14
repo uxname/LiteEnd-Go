@@ -9,6 +9,7 @@ package clientip
 import (
 	"net"
 	"net/http"
+	"strings"
 )
 
 // ClientIP is the address of the caller, without a port: RemoteAddr after
@@ -23,7 +24,7 @@ import (
 func ClientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		return strings.Trim(r.RemoteAddr, "[]")
 	}
 	return host
 }

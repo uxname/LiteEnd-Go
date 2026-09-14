@@ -25,4 +25,15 @@ func TestC3_ClientIP(t *testing.T) {
 		req.RemoteAddr = "invalid-address"
 		require.Equal(t, "invalid-address", ClientIP(req))
 	})
+
+	t.Run("normalizes bracketed IPv6 with and without port", func(t *testing.T) {
+		t.Parallel()
+		reqWithPort := httptest.NewRequest(http.MethodGet, "/", nil)
+		reqWithPort.RemoteAddr = "[::1]:8080"
+		require.Equal(t, "::1", ClientIP(reqWithPort))
+
+		reqNoPort := httptest.NewRequest(http.MethodGet, "/", nil)
+		reqNoPort.RemoteAddr = "[::1]"
+		require.Equal(t, "::1", ClientIP(reqNoPort))
+	})
 }

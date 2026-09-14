@@ -16,6 +16,7 @@ package health
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"runtime/metrics"
@@ -82,6 +83,9 @@ func writeRequestID(w http.ResponseWriter, r *http.Request) {
 	reqID := strings.TrimSpace(chimw.GetReqID(r.Context()))
 	if reqID == "" {
 		reqID = strings.TrimSpace(r.Header.Get("X-Request-Id"))
+	}
+	if len(reqID) > 128 {
+		reqID = reqID[:128]
 	}
 	if reqID != "" {
 		w.Header().Set("X-Request-Id", reqID)
@@ -155,6 +159,9 @@ func ping(ctx context.Context, p Pinger) checkResult {
 		return checkResult{Status: statusError, Error: "not configured"}
 	}
 	if err := p.Ping(ctx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return checkResult{Status: statusError, Error: "canceled"}
+		}
 		// Log the real cause server-side; expose only a generic status to the
 		// unauthenticated readiness endpoint so raw driver/connection details
 		// (which can include credentials) never leak.

@@ -42,6 +42,9 @@ func New(cfg *config.Config, log *slog.Logger, rdb *redis.Client) *Server {
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if reqID := chimw.GetReqID(r.Context()); reqID != "" {
+				if len(reqID) > 128 {
+					reqID = reqID[:128]
+				}
 				w.Header().Set("X-Request-Id", reqID)
 			}
 			next.ServeHTTP(w, r)
