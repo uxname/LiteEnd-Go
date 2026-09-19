@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime/metrics"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -130,56 +129,16 @@ func TestC9_ReadyIgnoresHeapButFollowsDependencies(t *testing.T) {
 	require.Equal(t, statusError, resp.Checks["database"].Status)
 }
 
-func TestC6_RequestIDPropagation(t *testing.T) {
+// The X-Request-Id header is not these handlers' job: the router's middleware
+// sets it for every route, and internal/server's
+// TestRouter_PropagatesRequestIDHeader is where that is tested.
+
+func TestPing_ContextCanceled(t *testing.T) {
 	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 
-	t.Run("Live sets X-Request-Id header from request", func(t *testing.T) {
-		t.Parallel()
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/livez", nil)
-		req.Header.Set("X-Request-Id", "test-live-trace-123")
-
-		Live().ServeHTTP(rec, req)
-
-		require.Equal(t, http.StatusOK, rec.Code)
-		require.Equal(t, "test-live-trace-123", rec.Header().Get("X-Request-Id"))
-	})
-
-	t.Run("Ready sets X-Request-Id header from request", func(t *testing.T) {
-		t.Parallel()
-		c := New(fakePinger{}, fakePinger{})
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
-		req.Header.Set("X-Request-Id", "test-ready-trace-456")
-
-		c.Ready().ServeHTTP(rec, req)
-
-		require.Equal(t, http.StatusOK, rec.Code)
-		require.Equal(t, "test-ready-trace-456", rec.Header().Get("X-Request-Id"))
-	})
-
-	t.Run("truncates X-Request-Id longer than 128 characters", func(t *testing.T) {
-		t.Parallel()
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/livez", nil)
-		longID := strings.Repeat("a", 200)
-		req.Header.Set("X-Request-Id", longID)
-
-		Live().ServeHTTP(rec, req)
-
-		require.Equal(t, http.StatusOK, rec.Code)
-		require.Len(t, rec.Header().Get("X-Request-Id"), 128)
-		require.Equal(t, strings.Repeat("a", 128), rec.Header().Get("X-Request-Id"))
-	})
-
-	t.Run("ping handles context.Canceled gracefully", func(t *testing.T) {
-		t.Parallel()
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-
-		p := fakePinger{err: context.Canceled}
-		res := ping(ctx, p)
-		require.Equal(t, statusError, res.Status)
-		require.Equal(t, "canceled", res.Error)
-	})
+	res := ping(ctx, fakePinger{err: context.Canceled})
+	require.Equal(t, statusError, res.Status)
+	require.Equal(t, "canceled", res.Error)
 }
