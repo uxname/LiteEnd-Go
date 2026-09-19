@@ -210,6 +210,7 @@ walks the deployment itself.
   Live updates use a WebSocket on the same URL (`graphql-transport-ws`).
 - **REST docs:** Swagger UI at `/swagger` (the spec file is at `/openapi.yaml`).
 - **Jobs dashboard:** Asynqmon (its own container, port `:5300`).
+- **Storage browser:** Garage Web UI (its own container, port `:5400`).
 
 ## Finding your way around the code
 

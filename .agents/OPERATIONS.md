@@ -2,12 +2,16 @@
 
 ## Auth is mandatory on every admin surface
 
-- External dashboards (pgweb, RedisInsight, Asynqmon) are exposed **only** through
+- External dashboards (pgweb, RedisInsight, Asynqmon, Garage Web UI) are exposed **only** through
   the Caddy Basic-Auth proxy (`admin_proxy` in `docker-compose.yml`, `Caddyfile`).
   **Never publish their container ports directly.**
 - The app's own dev pages (`/dev`, `/playground`, `/swagger`, `/openapi.yaml`) are
   wrapped with `middleware.BasicAuth` using `ADMIN_USER` / `ADMIN_PASSWORD`.
 - If you add a dashboard, put it behind the proxy too.
+- Garage's **admin API** (`[admin]`, port 3903) is on in `docker-compose.yml` only, for the
+  Garage Web UI. Its port is **never published**, and `GARAGE_ADMIN_TOKEN` falls back to a
+  fake dev value. That token reads every S3 secret key — set a real one
+  (`openssl rand -base64 32`) before that Garage is reachable from anything but loopback.
 
 Credentials: `ADMIN_USER` / `ADMIN_PASSWORD` (Go side) and `ADMIN_PASSWORD_HASH`
 (bcrypt, for Caddy — escape `$` as `$$` for docker compose). Keep all three in sync.

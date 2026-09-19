@@ -90,6 +90,7 @@ services:
       DB_STUDIO_PORT: ${DB_STUDIO_PORT:-5100}
       REDIS_STUDIO_PORT: ${REDIS_STUDIO_PORT:-5200}
       ASYNQMON_PORT: ${ASYNQMON_PORT:-5300}
+      S3_STUDIO_PORT: ${S3_STUDIO_PORT:-5400}
       ADMIN_USER: ${ADMIN_USER:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
     ports:
@@ -163,6 +164,10 @@ services:
       # design — this stack is loopback-only; generate a real one for anything
       # else with `openssl rand -hex 32`.
       GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef}
+      # Token of the admin API that s3_studio drives. That API listens inside
+      # this network only — 3903 is deliberately absent from `ports` below.
+      # Fake by design, same as above; `openssl rand -base64 32` for a real one.
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:-deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef}
     configs:
       - source: garage
         target: /etc/garage.toml
@@ -319,6 +324,34 @@ services:
       redis:
         condition: service_healthy
 
+  # Garage Web UI: bucket and object browser, keys, cluster state. It drives
+  # Garage's admin API and reads the bucket's own key from there to list files,
+  # so it needs no S3 credentials of its own. Its built-in login
+  # (AUTH_USER_PASS) stays off: the auth proxy below is the one door.
+  s3_studio:
+    image: khairul169/garage-webui:1.1.0
+    <<: *common-restart-policy
+    # Static Go binary that writes nothing (sessions and cache live in memory)
+    # — safe under any numeric non-root uid.
+    user: "65532:65532"
+    deploy:
+      <<: *small-resources
+    environment:
+      API_BASE_URL: http://garage:3903
+      API_ADMIN_KEY: ${GARAGE_ADMIN_TOKEN:-deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef}
+      S3_ENDPOINT_URL: http://garage:3900
+    configs:
+      - source: garage
+        target: /etc/garage.toml
+    networks:
+      - liteend-net
+    logging: *common-logging
+    depends_on:
+      # Not just a healthy garage: the UI caches a bucket's key for an hour, and
+      # until garage-init grants one there is nothing valid to cache.
+      garage-init:
+        condition: service_completed_successfully
+
   # Auth proxy: enforces HTTP Basic Auth in front of every admin dashboard, so
   # none of them is reachable anonymously. Backends publish no host ports.
   admin_proxy:
@@ -346,6 +379,7 @@ services:
       - "127.0.0.1:${DB_STUDIO_PORT:-5100}:8081"
       - "127.0.0.1:${REDIS_STUDIO_PORT:-5200}:8082"
       - "127.0.0.1:${ASYNQMON_PORT:-5300}:8083"
+      - "127.0.0.1:${S3_STUDIO_PORT:-5400}:8084"
     networks:
       - liteend-net
     logging: *common-logging
@@ -353,6 +387,7 @@ services:
       - db_studio
       - redis_studio
       - asynqmon
+      - s3_studio
 
 networks:
   liteend-net:
@@ -365,7 +400,8 @@ volumes:
   garage-data: # Garage object data (the uploaded files themselves)
 
 # Inline so the whole dev stack stays in one file. Garage has no environment
-# variables for these settings — only GARAGE_RPC_SECRET, which the services set.
+# variables for these settings — only for its secrets (GARAGE_RPC_SECRET,
+# GARAGE_ADMIN_TOKEN), which the services set.
 configs:
   garage:
     content: |
@@ -381,6 +417,11 @@ configs:
       [s3_api]
       s3_region = "garage"
       api_bind_addr = "[::]:3900"
+
+      [admin]
+      # Admin API, driven by the s3_studio dashboard. Never published to the
+      # host; the token arrives as GARAGE_ADMIN_TOKEN.
+      api_bind_addr = "[::]:3903"
 
       [s3_web]
       # Public, unauthenticated reads of the uploaded files: the S3 API above

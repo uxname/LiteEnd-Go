@@ -86,6 +86,7 @@ type Config struct {
 	DBStudioPort    int `env:"DB_STUDIO_PORT" envDefault:"5100"`
 	RedisStudioPort int `env:"REDIS_STUDIO_PORT" envDefault:"5200"`
 	AsynqmonPort    int `env:"ASYNQMON_PORT" envDefault:"5300"`
+	S3StudioPort    int `env:"S3_STUDIO_PORT" envDefault:"5400"`
 
 	// Basic-auth credentials guarding the app's dev pages (/dev, /playground,
 	// /swagger). The external dashboards use the same creds via the auth proxy.

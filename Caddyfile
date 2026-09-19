@@ -37,3 +37,9 @@
 	import protected
 	reverse_proxy asynqmon:8080
 }
+
+# Garage Web UI (S3 browser)
+:8084 {
+	import protected
+	reverse_proxy s3_studio:3909
+}

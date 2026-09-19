@@ -177,6 +177,7 @@ func devLinks(cfg *config.Config) []devtools.Link {
 		{Title: "pgweb (DB browser)", Desc: "Browse Postgres tables — Prisma Studio analog", URL: localhostURL(cfg.DBStudioPort), Icon: "⛁"},
 		{Title: "RedisInsight", Desc: "Inspect Redis keys & streams", URL: localhostURL(cfg.RedisStudioPort), Icon: "⚡"},
 		{Title: "Asynqmon (queue dashboard)", Desc: "Background jobs — Bull Board analog", URL: localhostURL(cfg.AsynqmonPort), Icon: "⚙"},
+		{Title: "Garage Web UI (S3 browser)", Desc: "Browse buckets & uploaded files", URL: localhostURL(cfg.S3StudioPort), Icon: "☁"},
 	}
 }
 

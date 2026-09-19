@@ -106,7 +106,7 @@ docker compose logs --no-log-prefix app | jq -c 'select(.msg=="http_request")' |
 - Readiness: `curl localhost:4000/readyz` → per-dependency status, 503 if one is
   unusable — this is what a reverse proxy should gate traffic on.
 - GraphQL IDE: `/playground` (Basic-Auth, dev login `admin`/`admin`).
-- Dashboards (Basic-Auth): pgweb `:5100`, RedisInsight `:5200`, Asynqmon `:5300`.
+- Dashboards (Basic-Auth): pgweb `:5100`, RedisInsight `:5200`, Asynqmon `:5300`, Garage Web UI `:5400`.
 - Schema (source of truth): `internal/graph/schema.graphqls` (every field documented).
 
 ## Going to production: deeper observability (not built in)
