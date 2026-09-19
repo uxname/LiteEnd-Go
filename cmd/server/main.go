@@ -37,7 +37,12 @@ func main() {
 	// config, unreachable DB) is exactly the line an operator greps for, and
 	// slog's default text handler would emit it in a shape the log collector
 	// drops. run() re-installs the same logger at the configured level.
-	slog.SetDefault(logger.New(os.Getenv("LOG_LEVEL")))
+	//
+	// config.Load is what rejects a bad LOG_LEVEL, by name; this early logger only
+	// has to exist, so a value slog cannot parse leaves it at the zero level, info.
+	var bootLevel slog.Level
+	_ = bootLevel.UnmarshalText([]byte(os.Getenv("LOG_LEVEL")))
+	slog.SetDefault(logger.New(bootLevel))
 
 	if err := run(); err != nil {
 		slog.Error("application failed to start", "error", err)

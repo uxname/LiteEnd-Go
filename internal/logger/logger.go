@@ -55,27 +55,16 @@ func RedactValue(v any) any {
 	}
 }
 
-// New returns a JSON slog.Logger at the given level ("debug","info","warn","error").
-// Attribute keys matching sensitiveKeys are redacted.
-func New(level string) *slog.Logger {
+// New returns a JSON slog.Logger at the given level. Attribute keys matching
+// sensitiveKeys are redacted. The level arrives already parsed: config reads
+// LOG_LEVEL straight into a slog.Level, so there is no second parser to keep in
+// step with slog's own.
+func New(level slog.Level) *slog.Logger {
 	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level:       parseLevel(level),
+		Level:       level,
 		ReplaceAttr: redactSensitive,
 	})
 	return slog.New(handler)
-}
-
-func parseLevel(level string) slog.Level {
-	switch strings.ToLower(strings.TrimSpace(level)) {
-	case "debug", "trace":
-		return slog.LevelDebug
-	case "warn", "warning":
-		return slog.LevelWarn
-	case "error", "fatal":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
 }
 
 func redactSensitive(_ []string, a slog.Attr) slog.Attr {

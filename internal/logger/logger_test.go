@@ -12,9 +12,9 @@ import (
 
 // newTestLogger mirrors New but writes to buf, so the handler under test —
 // including its ReplaceAttr hook — is the one the app really installs.
-func newTestLogger(buf *bytes.Buffer, level string) *slog.Logger {
+func newTestLogger(buf *bytes.Buffer, level slog.Level) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{
-		Level:       parseLevel(level),
+		Level:       level,
 		ReplaceAttr: redactSensitive,
 	}))
 }
@@ -23,7 +23,7 @@ func newTestLogger(buf *bytes.Buffer, level string) *slog.Logger {
 func logLine(t *testing.T, attrs ...any) map[string]any {
 	t.Helper()
 	var buf bytes.Buffer
-	newTestLogger(&buf, "info").Info("msg", attrs...)
+	newTestLogger(&buf, slog.LevelInfo).Info("msg", attrs...)
 	var line map[string]any
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &line))
 	return line
@@ -86,26 +86,21 @@ func TestSensitiveKeyAndRedactValue(t *testing.T) {
 	require.Equal(t, 42, RedactValue(42), "non-container values pass through")
 }
 
-func TestParseLevel(t *testing.T) {
+// New wires the level it is handed into the handler. Parsing LOG_LEVEL is not
+// tested here because it is not done here: config reads it into a slog.Level
+// (see TestLoad_LogLevel), so this package never sees the raw string.
+func TestNew_HonoursTheLevel(t *testing.T) {
 	t.Parallel()
-	for in, want := range map[string]slog.Level{
-		"debug":    slog.LevelDebug,
-		"trace":    slog.LevelDebug,
-		"warning":  slog.LevelWarn,
-		"error":    slog.LevelError,
-		"fatal":    slog.LevelError,
-		"":         slog.LevelInfo,
-		"nonsense": slog.LevelInfo,
-	} {
-		require.Equal(t, want, parseLevel(in), "level %q", in)
-	}
-	require.Equal(t, slog.LevelWarn, parseLevel("  WARN  "), "surrounding whitespace is trimmed")
-	require.True(t, New("debug").Enabled(context.Background(), slog.LevelDebug))
+	ctx := context.Background()
+
+	require.True(t, New(slog.LevelDebug).Enabled(ctx, slog.LevelDebug))
+	require.False(t, New(slog.LevelWarn).Enabled(ctx, slog.LevelInfo), "below the level is dropped")
+	require.True(t, New(slog.LevelWarn).Enabled(ctx, slog.LevelError))
 }
 
 func TestContextRoundTrip(t *testing.T) {
 	t.Parallel()
-	l := New("info")
+	l := New(slog.LevelInfo)
 	require.Same(t, l, From(Into(context.Background(), l)))
 	require.Same(t, slog.Default(), From(context.Background()), "no logger in ctx falls back to the default")
 }

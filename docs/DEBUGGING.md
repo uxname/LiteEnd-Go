@@ -8,7 +8,9 @@ codebase. Pair it with `internal/graph/errors.go` (error codes) and
 ## How logs look
 
 Logs are **structured JSON on stdout** (`log/slog`, see `internal/logger`).
-Level via `LOG_LEVEL` (`debug|info|warn|error`, default `info`). Sensitive keys
+Level via `LOG_LEVEL` (`debug|info|warn|error`, any case, default `info`). Any
+other value — `warning`, `trace`, a typo — **stops the boot** with the offending
+string in the error, rather than quietly running at `info`. Sensitive keys
 (`password`, `token`, `secret`, `authorization`, `credentials`, `cookie`, `sig`)
 are redacted to `[REDACTED]` automatically.
 

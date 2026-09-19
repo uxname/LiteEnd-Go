@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -136,6 +137,30 @@ func TestLoad_TrimsS3PublicBaseURLSlash(t *testing.T) {
 // C11: pool size comes from the environment, and C8: the number of trusted
 // proxy hops does too. Both have to keep working with nothing set — every
 // existing deployment relies on the old hardcoded 10 and on a single proxy.
+// LOG_LEVEL is parsed by slog itself. A value slog does not know stops the boot
+// with the offending string in the message, instead of quietly running at info —
+// which is how a "debug" session ends up logging nothing at all.
+func TestLoad_LogLevel(t *testing.T) {
+	setRequiredEnv(t)
+
+	for in, want := range map[string]slog.Level{
+		"debug": slog.LevelDebug,
+		"WARN":  slog.LevelWarn,
+		"error": slog.LevelError,
+		"":      slog.LevelInfo, // a blank line in a copied .env falls back to the default
+	} {
+		t.Setenv("LOG_LEVEL", in)
+		cfg, err := Load()
+		require.NoError(t, err, "LOG_LEVEL=%q", in)
+		require.Equal(t, want, cfg.LogLevel, "LOG_LEVEL=%q", in)
+	}
+
+	t.Setenv("LOG_LEVEL", "verbose")
+	_, err := Load()
+	require.ErrorContains(t, err, "LogLevel")
+	require.ErrorContains(t, err, "verbose")
+}
+
 func TestLoad_PoolAndProxyDefaults(t *testing.T) {
 	setRequiredEnv(t)
 	// Same restore-then-unset trick as above: assert the default, not the value

@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"strconv"
@@ -20,8 +21,10 @@ type Config struct {
 	// Application
 	Port       int      `env:"PORT" envDefault:"4000"`
 	CORSOrigin []string `env:"CORS_ORIGIN" envSeparator:","`
-	LogLevel   string   `env:"LOG_LEVEL" envDefault:"info"`
-	Env        string   `env:"NODE_ENV" envDefault:"development"`
+	// LogLevel is parsed by slog itself (debug | info | warn | error, any case):
+	// a value it does not know stops the boot rather than degrading to info.
+	LogLevel slog.Level `env:"LOG_LEVEL" envDefault:"info"`
+	Env      string     `env:"NODE_ENV" envDefault:"development"`
 	// TrustedProxyHops is how many reverse proxies sit in front of this app. The
 	// client address is taken that many entries from the RIGHT of X-Forwarded-For,
 	// so a header forged by the client cannot impersonate another address.
