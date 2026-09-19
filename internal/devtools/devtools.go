@@ -3,10 +3,10 @@
 package devtools
 
 import (
+	"bytes"
 	_ "embed"
-	"html"
+	"html/template"
 	"net/http"
-	"strings"
 )
 
 // openapiSpec is the REST API contract, embedded from openapi.yaml so it can be
@@ -48,65 +48,37 @@ type Link struct {
 	Icon string
 }
 
-// devLauncherCSS is the self-contained stylesheet for the /dev launcher.
+// devLauncherHTML is the /dev page: markup and stylesheet in one real HTML file,
+// so it is edited with an HTML editor instead of inside Go string literals.
 // Everything is inline + system fonts so the page renders fully offline,
 // independent of the CDN assets the playground/Swagger pages rely on.
-// Minimal Go-flavoured theme: white, hairline borders, the Go gopher cyan
-// (#00ADD8) as the single accent, fast cheap hover transitions.
-const devLauncherCSS = `:root{color-scheme:light}
-*{box-sizing:border-box}
-body{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-margin:0;min-height:100vh;color:#1a1a1a;background:#fff;-webkit-font-smoothing:antialiased}
-.wrap{max-width:760px;margin:0 auto;padding:clamp(3rem,9vh,6rem) 1.5rem}
-header{margin-bottom:2.5rem}
-.eyebrow{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;
-font-weight:600;color:#00add8;margin:0 0 .65rem}
-h1{font-size:clamp(1.7rem,4vw,2.2rem);font-weight:700;margin:0 0 .4rem;
-letter-spacing:-.02em;color:#1a1a1a}
-p.sub{color:#6b7280;margin:0;font-size:1rem;line-height:1.5}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:.75rem}
-a.tool{display:flex;align-items:flex-start;gap:.7rem;padding:.95rem 1.05rem;
-border:1px solid #e5e7eb;border-radius:10px;text-decoration:none;color:inherit;
-transition:border-color .12s ease,background .12s ease}
-a.tool:hover{border-color:#00add8;background:#f5fcff}
-.ico{flex:0 0 auto;width:1.4rem;text-align:center;font-size:1.05rem;color:#00add8;line-height:1.45}
-.meta{display:flex;flex-direction:column;gap:.15rem;min-width:0}
-.t{font-weight:600;font-size:.95rem;line-height:1.45;color:#1a1a1a}
-.d{color:#6b7280;font-size:.8rem;line-height:1.4}
-footer{margin-top:2.5rem;color:#9ca3af;font-size:.78rem;
-font-family:ui-monospace,SFMono-Regular,Menlo,monospace}`
+//
+//go:embed dev.html
+var devLauncherHTML string
 
 // DevLauncher renders a self-contained HTML control-room page linking to all
 // dev tools and dashboards.
+//
+// html/template escapes each value for the place it lands in — an href is not
+// only HTML-escaped but also refused when it is a "javascript:" URL, which a
+// hand-rolled html.EscapeString does not do. The links are static, so the page
+// is rendered once, here, and served as bytes; a template that does not parse or
+// execute is a programming error in dev.html, caught by the test that renders it.
 func DevLauncher(links []Link) http.HandlerFunc {
-	var b strings.Builder
-	b.WriteString(`<!doctype html><html lang="en"><head><meta charset="utf-8">` +
-		`<meta name="viewport" content="width=device-width,initial-scale=1">` +
-		`<title>liteend-go · dev</title><style>` + devLauncherCSS + `</style></head>` +
-		`<body><div class="wrap"><header>` +
-		`<p class="eyebrow">liteend-go / dev</p>` +
-		`<h1>Dev tools</h1>` +
-		`<p class="sub">Local tools, dashboards and API surfaces.</p>` +
-		`</header><div class="grid">`)
-	for _, l := range links {
-		icon := l.Icon
-		if icon == "" {
-			icon = "→"
-		}
-		b.WriteString(`<a class="tool" href="` + html.EscapeString(l.URL) +
-			`" target="_blank" rel="noopener">` +
-			`<span class="ico">` + html.EscapeString(icon) + `</span>` +
-			`<span class="meta"><span class="t">` + html.EscapeString(l.Title) + `</span>` +
-			`<span class="d">` + html.EscapeString(l.Desc) + `</span></span></a>`)
+	var page bytes.Buffer
+	tmpl, err := template.New("dev").Parse(devLauncherHTML)
+	if err == nil {
+		err = tmpl.Execute(&page, links)
 	}
-	b.WriteString(`</div><footer>liteend-go · dev-only · basic auth</footer>` +
-		`</div></body></html>`)
-	page := b.String()
 
 	return func(w http.ResponseWriter, _ *http.Request) {
+		if err != nil {
+			http.Error(w, "dev launcher template: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache, private")
-		_, _ = w.Write([]byte(page))
+		_, _ = w.Write(page.Bytes())
 	}
 }
 

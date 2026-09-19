@@ -36,6 +36,29 @@ func TestDevLauncher_RendersLinks(t *testing.T) {
 	require.Contains(t, body, "browse db")
 }
 
+// The page is rendered by html/template, so a value is escaped for the place it
+// lands in: markup in a title stays text, and a link that would run script is
+// replaced rather than emitted. A card with no icon falls back to the arrow.
+func TestDevLauncher_EscapesValuesAndRefusesScriptLinks(t *testing.T) {
+	t.Parallel()
+	links := []Link{
+		{Title: "<b>bold</b>", Desc: "a & b", URL: "javascript:alert(1)"},
+		{Title: "Iconed", Desc: "has its own", URL: "/ok", Icon: "◈"},
+	}
+	rec := httptest.NewRecorder()
+	DevLauncher(links).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dev", nil))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	require.Contains(t, body, "&lt;b&gt;bold&lt;/b&gt;")
+	require.NotContains(t, body, "<b>bold</b>")
+	require.Contains(t, body, "a &amp; b")
+	require.NotContains(t, body, "javascript:alert", "a script URL must never reach an href")
+	require.Contains(t, body, `<span class="ico">→</span>`, "no icon falls back to the arrow")
+	require.Contains(t, body, `<span class="ico">◈</span>`)
+	require.Contains(t, body, `href="/ok"`)
+}
+
 func TestSwaggerUI_EmbedsSpecURL(t *testing.T) {
 	t.Parallel()
 	rec := httptest.NewRecorder()
