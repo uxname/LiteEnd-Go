@@ -3,6 +3,7 @@
 package upload
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -308,11 +309,14 @@ func (s *Service) ProcessFile(
 		return nil, ErrDisallowedMime
 	}
 
-	// Content-based validation: sniff the leading bytes and trust the detected
-	// type, not the client-supplied header (which is trivially spoofable).
-	head, body, err := sniff(body)
-	if err != nil {
-		return nil, err
+	// Content-based validation: peek at the leading bytes and trust the detected
+	// type, not the client-supplied header (which is trivially spoofable). Peek
+	// leaves them in the buffer, so the read below still gets the whole stream; a
+	// file shorter than sniffLen ends the peek with io.EOF, which is not a failure.
+	buffered := bufio.NewReader(body)
+	head, err := buffered.Peek(sniffLen)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("read upload head: %w", err)
 	}
 	detected := detectMime(head)
 	if !AllowedMime(detected) {
@@ -322,7 +326,7 @@ func (s *Service) ProcessFile(
 	// file and at BodyLimit (10 MiB) per request, and PutObject stores a known
 	// size in one atomic PUT instead of a multipart upload. Raising either cap
 	// raises this memory ceiling with it.
-	data, err := io.ReadAll(io.LimitReader(body, config.UploadMaxFileSize+1))
+	data, err := io.ReadAll(io.LimitReader(buffered, config.UploadMaxFileSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("read upload: %w", err)
 	}
@@ -378,19 +382,6 @@ func isASCIIAlnum(r rune) bool {
 
 // relativeDir is the date prefix every object key starts with: YYYY/MM/DD/HH-MM.
 func relativeDir(t time.Time) string { return t.Format("2006/01/02/15-04") }
-
-// sniff reads up to sniffLen leading bytes for content detection and returns a
-// reader that replays them ahead of the unread remainder, so the full stream is
-// still stored.
-func sniff(body io.Reader) (head []byte, full io.Reader, err error) {
-	buf := make([]byte, sniffLen)
-	n, readErr := io.ReadFull(body, buf)
-	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
-		return nil, nil, fmt.Errorf("read upload head: %w", readErr)
-	}
-	head = buf[:n]
-	return head, io.MultiReader(bytes.NewReader(head), body), nil
-}
 
 // detectMime returns the sniffed MIME type without any charset parameters.
 func detectMime(head []byte) string {

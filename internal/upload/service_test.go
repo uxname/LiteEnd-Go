@@ -216,6 +216,19 @@ func TestProcessFile_RejectsSpoofedContent(t *testing.T) {
 	require.Empty(t, store.objects)
 }
 
+// The sniffed head must not be lost: a file longer than sniffLen is peeked, not
+// consumed, so every byte — the head included — still reaches the buffer.
+func TestProcessFile_KeepsTheWholeBodyOfAFileLongerThanTheSniffWindow(t *testing.T) {
+	t.Parallel()
+	s, _ := newSvc(t)
+
+	body := pngMagic + strings.Repeat("a", sniffLen*3)
+	f, err := s.ProcessFile(context.Background(), "pic.png", "image/png", strings.NewReader(body))
+	require.NoError(t, err)
+	require.Equal(t, body, string(f.data))
+	require.Equal(t, int64(len(body)), f.size)
+}
+
 // C5: a committed upload lands in the shared bucket under a dated, UUID-named
 // key, and the link handed back is the configured public base plus that key —
 // no byte of it touches local disk.

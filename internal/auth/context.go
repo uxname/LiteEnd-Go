@@ -5,6 +5,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/uxname/liteend-go/internal/db/sqlc"
 )
@@ -44,10 +45,8 @@ func RequireRole(ctx context.Context, role sqlc.ProfileRole) (*sqlc.Profile, err
 	if err != nil {
 		return nil, err
 	}
-	for _, r := range p.Roles {
-		if r == role {
-			return p, nil
-		}
+	if slices.Contains(p.Roles, role) {
+		return p, nil
 	}
 	return nil, ErrForbidden
 }
