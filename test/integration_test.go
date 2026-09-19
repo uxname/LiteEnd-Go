@@ -51,6 +51,12 @@ const (
 	s3RootUser = "liteend-test-user"
 	s3RootPass = "liteend-test-pass"
 	s3Bucket   = "uploads"
+
+	// pgPassword carries every character that breaks a connection URL assembled
+	// by hand ("/", "#", "?", "%", "@"). The whole suite boots through it, so both
+	// database paths — the pgx pool and the database/sql handle goose migrates
+	// with — prove they survive a password a generator would actually produce.
+	pgPassword = "p@ss/w#rd?%41"
 )
 
 func TestMain(m *testing.M) {
@@ -60,7 +66,7 @@ func TestMain(m *testing.M) {
 		ctx, "postgres:18.1-alpine",
 		tcpostgres.WithDatabase("postgres"),
 		tcpostgres.WithUsername("postgres"),
-		tcpostgres.WithPassword("postgres"),
+		tcpostgres.WithPassword(pgPassword),
 		testcontainers.WithWaitStrategy(
 			wait.ForListeningPort("5432/tcp").WithStartupTimeout(60*time.Second),
 		),
@@ -97,7 +103,7 @@ func TestMain(m *testing.M) {
 		"DATABASE_HOST":     pgHost,
 		"DATABASE_PORT":     pgPort.Port(),
 		"DATABASE_USER":     "postgres",
-		"DATABASE_PASSWORD": "postgres",
+		"DATABASE_PASSWORD": pgPassword,
 		"DATABASE_NAME":     "postgres",
 		"REDIS_HOST":        rdHost,
 		"REDIS_PORT":        rdPort.Port(),

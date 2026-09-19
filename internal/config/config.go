@@ -5,7 +5,9 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -156,17 +158,25 @@ func (c *Config) validateFileLinks() error {
 	return nil
 }
 
-// DatabaseURL builds a libpq-style connection string for pgx.
+// DatabaseURL builds a libpq-style connection string for pgx. It goes through
+// net/url rather than Sprintf: a password holding "/", "#", "?" or "%" is
+// ordinary, and pasted in raw it breaks the URL apart — the boot then fails on a
+// parse error that never names the password as the cause.
 func (c *Config) DatabaseURL() string {
-	return fmt.Sprintf(
-		"postgres://%s:%s@%s:%d/%s?sslmode=disable",
-		c.DatabaseUser, c.DatabasePassword, c.DatabaseHost, c.DatabasePort, c.DatabaseName,
-	)
+	u := url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword(c.DatabaseUser, c.DatabasePassword),
+		Host:     net.JoinHostPort(c.DatabaseHost, strconv.Itoa(c.DatabasePort)),
+		Path:     c.DatabaseName,
+		RawQuery: "sslmode=disable",
+	}
+	return u.String()
 }
 
-// RedisAddr returns the host:port for the Redis client.
+// RedisAddr returns the host:port for the Redis client. JoinHostPort brackets an
+// IPv6 host, which a plain "%s:%d" does not.
 func (c *Config) RedisAddr() string {
-	return fmt.Sprintf("%s:%d", c.RedisHost, c.RedisPort)
+	return net.JoinHostPort(c.RedisHost, strconv.Itoa(c.RedisPort))
 }
 
 // trimmedNonEmpty trims each entry of a comma-separated env list and drops the

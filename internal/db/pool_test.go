@@ -29,3 +29,28 @@ func TestC11_PoolSizeComesFromConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int32(4), poolCfg.MaxConns, "pool size must come from Config.DBPoolMax")
 }
+
+// TestPoolConfig_SurvivesSpecialCharactersInThePassword pins the connection URL
+// to net/url: a generated password routinely holds "/", "#", "?" or "%", and a
+// URL assembled with Sprintf breaks on every one of them — the boot then dies on
+// a parse error that never mentions the password.
+func TestPoolConfig_SurvivesSpecialCharactersInThePassword(t *testing.T) {
+	t.Parallel()
+
+	for _, password := range []string{"p/w", "p#w", "p?w", "p%41w", "p@w:x", "p w"} {
+		poolCfg, err := newPoolConfig(&config.Config{
+			DatabaseHost:     "db.internal",
+			DatabasePort:     6543,
+			DatabaseUser:     "app",
+			DatabasePassword: password,
+			DatabaseName:     "shop",
+			DBPoolMax:        4,
+		})
+		require.NoError(t, err, "password %q", password)
+		require.Equal(t, password, poolCfg.ConnConfig.Password, "password %q", password)
+		require.Equal(t, "app", poolCfg.ConnConfig.User, "password %q", password)
+		require.Equal(t, "db.internal", poolCfg.ConnConfig.Host, "password %q", password)
+		require.Equal(t, uint16(6543), poolCfg.ConnConfig.Port, "password %q", password)
+		require.Equal(t, "shop", poolCfg.ConnConfig.Database, "password %q", password)
+	}
+}
