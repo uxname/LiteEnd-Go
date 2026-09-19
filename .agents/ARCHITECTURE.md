@@ -97,6 +97,13 @@ promise the event arrives.
   Asynq task queue (`internal/queue`), which persists in Redis, retries, and
   survives a restart of the process that was supposed to handle it. Sending an
   email, charging a card, syncing an external system: queue, not subscription.
+- **An event goes to the channel of the one who should hear it.** Profile events
+  are published to `profile:updated:<profile id>`, and a subscription listens to
+  its owner's channel only. One shared channel means Redis delivers every event
+  to every subscriber and the application decodes each just to drop it — name the
+  channel after the recipient instead of filtering after delivery. Each
+  subscription still holds its own Redis connection; that cost is per subscriber
+  and this does not change it.
 
 ## How to add things
 
