@@ -42,26 +42,6 @@ func (q *Queries) CreateProfile(ctx context.Context, oidcSub string) (Profile, e
 	return i, err
 }
 
-const getProfileByID = `-- name: GetProfileByID :one
-SELECT id, created_at, updated_at, oidc_sub, roles, avatar_url, display_name, bio FROM profiles WHERE id = $1
-`
-
-func (q *Queries) GetProfileByID(ctx context.Context, id int32) (Profile, error) {
-	row := q.db.QueryRow(ctx, getProfileByID, id)
-	var i Profile
-	err := row.Scan(
-		&i.ID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.OidcSub,
-		&i.Roles,
-		&i.AvatarUrl,
-		&i.DisplayName,
-		&i.Bio,
-	)
-	return i, err
-}
-
 const getProfileByOIDCSub = `-- name: GetProfileByOIDCSub :one
 SELECT id, created_at, updated_at, oidc_sub, roles, avatar_url, display_name, bio FROM profiles WHERE oidc_sub = $1
 `

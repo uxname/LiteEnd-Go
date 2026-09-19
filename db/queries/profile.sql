@@ -1,9 +1,6 @@
 -- name: GetProfileByOIDCSub :one
 SELECT * FROM profiles WHERE oidc_sub = $1;
 
--- name: GetProfileByID :one
-SELECT * FROM profiles WHERE id = $1;
-
 -- name: CreateProfile :one
 INSERT INTO profiles (oidc_sub)
 VALUES ($1)
