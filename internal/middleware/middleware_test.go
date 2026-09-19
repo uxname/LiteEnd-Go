@@ -1,11 +1,9 @@
 package middleware
 
 import (
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -212,19 +210,6 @@ func TestRecoverer_PanicReturns500(t *testing.T) {
 
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
 	require.Contains(t, rec.Body.String(), "Internal Server Error")
-}
-
-func TestBodyLimit_RejectsOversizedBody(t *testing.T) {
-	t.Parallel()
-	var readErr error
-	h := BodyLimit(8)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		_, readErr = io.ReadAll(r.Body)
-	}))
-
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(strings.Repeat("x", 100)))
-	h.ServeHTTP(httptest.NewRecorder(), req)
-
-	require.Error(t, readErr, "reading past the limit must fail")
 }
 
 func TestSecureHeaders_SetsHardeningHeaders(t *testing.T) {

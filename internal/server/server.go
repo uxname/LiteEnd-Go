@@ -67,7 +67,7 @@ func New(cfg *config.Config, log *slog.Logger, rdb *redis.Client) *Server {
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
-	r.Use(appmw.BodyLimit(config.BodyLimit))
+	r.Use(chimw.RequestSize(config.BodyLimit))
 
 	// Catch-all 404 (mirrors AppController).
 	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {

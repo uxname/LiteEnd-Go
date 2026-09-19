@@ -323,7 +323,7 @@ func (s *Service) ProcessFile(
 		return nil, ErrDisallowedMime
 	}
 	// The body is buffered whole: it is capped at UploadMaxFileSize (5 MiB) per
-	// file and at BodyLimit (10 MiB) per request, and PutObject stores a known
+	// file and at config.BodyLimit (10 MiB) per request, and PutObject stores a known
 	// size in one atomic PUT instead of a multipart upload. Raising either cap
 	// raises this memory ceiling with it.
 	data, err := io.ReadAll(io.LimitReader(buffered, config.UploadMaxFileSize+1))

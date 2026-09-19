@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -82,6 +83,27 @@ func TestRouter_PanicStillLogsHTTPRequest(t *testing.T) {
 	require.Equal(t, "/boom", reqLine["path"])
 	require.Equal(t, slog.LevelError.String(), reqLine["level"], "a 5xx is an ERROR line")
 	require.Equal(t, panicLine["request_id"], reqLine["request_id"], "both lines share one id")
+}
+
+// The router itself caps a request body at config.BodyLimit. The cap is chi's
+// RequestSize middleware, so there is nothing of ours to unit-test — what can
+// break is the wiring, and that is what this holds: drop the r.Use line and an
+// upload endpoint buffers whatever a client cares to send.
+func TestRouter_CapsRequestBody(t *testing.T) {
+	t.Parallel()
+
+	srv := New(&config.Config{Env: "test"}, slog.New(slog.DiscardHandler), nil)
+	var readErr error
+	srv.Router().Post("/echo", func(_ http.ResponseWriter, r *http.Request) {
+		_, readErr = io.ReadAll(r.Body)
+	})
+
+	body := strings.NewReader(strings.Repeat("x", config.BodyLimit+1))
+	srv.Router().ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/echo", body))
+
+	var tooLarge *http.MaxBytesError
+	require.ErrorAs(t, readErr, &tooLarge, "reading past the limit must fail")
+	require.Equal(t, int64(config.BodyLimit), tooLarge.Limit)
 }
 
 // The catch-all 404 is a client fault, not ours: WARN, not ERROR.
