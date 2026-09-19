@@ -23,9 +23,15 @@ func (q *Queries) CountProfiles(ctx context.Context) (int64, error) {
 const createProfile = `-- name: CreateProfile :one
 INSERT INTO profiles (oidc_sub)
 VALUES ($1)
+ON CONFLICT (oidc_sub) DO UPDATE SET oidc_sub = EXCLUDED.oidc_sub
 RETURNING id, created_at, updated_at, oidc_sub, roles, avatar_url, display_name, bio
 `
 
+// An upsert, so that two replicas racing to create a first-time user both get
+// the row instead of one of them a unique violation. The DO UPDATE writes the
+// value that is already there: it exists only because DO NOTHING returns no row
+// on a conflict, and RETURNING has to yield one. It runs for the loser of the
+// race alone — which is also the only time it touches updated_at (the trigger).
 func (q *Queries) CreateProfile(ctx context.Context, oidcSub string) (Profile, error) {
 	row := q.db.QueryRow(ctx, createProfile, oidcSub)
 	var i Profile

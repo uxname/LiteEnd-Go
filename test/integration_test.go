@@ -33,6 +33,7 @@ import (
 
 	"github.com/uxname/liteend-go/internal/app"
 	"github.com/uxname/liteend-go/internal/config"
+	"github.com/uxname/liteend-go/internal/db"
 )
 
 var (
@@ -145,6 +146,24 @@ func TestMain(m *testing.M) {
 	_ = rdC.Terminate(ctx)
 	_ = s3C.Terminate(ctx)
 	os.Exit(code)
+}
+
+// CreateProfile is an upsert: asked twice for the same subject it answers with
+// the same row instead of a unique violation. That is what lets the profile
+// service do without its own "insert, catch 23505, select again" — two replicas
+// racing to create a first-time user both get the profile, straight from SQL.
+func TestCreateProfile_IsAnUpsert(t *testing.T) {
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	database, err := db.New(t.Context(), cfg)
+	require.NoError(t, err)
+	t.Cleanup(database.Close)
+
+	first, err := database.Queries.CreateProfile(t.Context(), "upsert-sub")
+	require.NoError(t, err)
+	second, err := database.Queries.CreateProfile(t.Context(), "upsert-sub")
+	require.NoError(t, err, "a second create for the same subject must not be a unique violation")
+	require.Equal(t, first.ID, second.ID, "both calls answer with the one row")
 }
 
 // C9: liveness and readiness are separate endpoints on the assembled app. With

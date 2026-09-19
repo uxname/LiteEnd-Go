@@ -11,16 +11,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/db/sqlc"
 	"github.com/uxname/liteend-go/internal/logger"
 	"github.com/uxname/liteend-go/internal/redis"
 )
-
-// uniqueViolation is the PostgreSQL SQLSTATE for a unique-constraint violation.
-const uniqueViolation = "23505"
 
 // ErrProfileNotFound is returned by FindBySub when no profile exists for the
 // given OIDC subject (distinct from a real lookup error).
@@ -69,7 +65,7 @@ func (s *Service) FindOrCreateBySub(ctx context.Context, sub string) (sqlc.Profi
 
 	p, err := s.q.GetProfileByOIDCSub(ctx, sub)
 	if errors.Is(err, pgx.ErrNoRows) {
-		p, err = s.createOrGet(ctx, sub)
+		p, err = s.create(ctx, sub)
 		if err != nil {
 			return sqlc.Profile{}, err
 		}
@@ -81,25 +77,18 @@ func (s *Service) FindOrCreateBySub(ctx context.Context, sub string) (sqlc.Profi
 	return p, nil
 }
 
-// createOrGet creates a profile for sub, tolerating the find-or-create race: if
-// a concurrent request inserts the same oidc_sub between our SELECT and INSERT,
-// CreateProfile fails with a unique-constraint violation, so we re-read the row
-// the winner created instead of surfacing a 500.
-func (s *Service) createOrGet(ctx context.Context, sub string) (sqlc.Profile, error) {
+// create inserts the profile for sub. The find-or-create race — a concurrent
+// request inserting the same oidc_sub between our SELECT and this INSERT — is
+// settled in SQL: CreateProfile is an upsert, so the loser gets the winner's row
+// back rather than a unique violation. For that one caller the log line below
+// says "created" about a row it did not create; both lines carry the same id.
+func (s *Service) create(ctx context.Context, sub string) (sqlc.Profile, error) {
 	p, err := s.q.CreateProfile(ctx, sub)
-	if err == nil {
-		logger.From(ctx).Info("profile created", "profileId", p.ID)
-		return p, nil
+	if err != nil {
+		return sqlc.Profile{}, fmt.Errorf("create profile: %w", err)
 	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
-		p, err = s.q.GetProfileByOIDCSub(ctx, sub)
-		if err != nil {
-			return sqlc.Profile{}, fmt.Errorf("get profile after create conflict: %w", err)
-		}
-		return p, nil
-	}
-	return sqlc.Profile{}, fmt.Errorf("create profile: %w", err)
+	logger.From(ctx).Info("profile created", "profileId", p.ID)
+	return p, nil
 }
 
 // FindBySub returns a profile by subject, or ErrProfileNotFound if none exists.
@@ -126,7 +115,7 @@ func (s *Service) FindBySub(ctx context.Context, sub string) (*sqlc.Profile, err
 func (s *Service) FindOrCreateMockUser(ctx context.Context) (sqlc.Profile, error) {
 	p, err := s.q.GetProfileByOIDCSub(ctx, MockSub)
 	if errors.Is(err, pgx.ErrNoRows) {
-		p, err = s.createOrGet(ctx, MockSub)
+		p, err = s.create(ctx, MockSub)
 		if err != nil {
 			return sqlc.Profile{}, err
 		}
