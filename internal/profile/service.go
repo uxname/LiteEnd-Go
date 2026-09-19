@@ -16,6 +16,7 @@ import (
 	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/db/sqlc"
 	"github.com/uxname/liteend-go/internal/logger"
+	"github.com/uxname/liteend-go/internal/redis"
 )
 
 // uniqueViolation is the PostgreSQL SQLSTATE for a unique-constraint violation.
@@ -159,7 +160,8 @@ func (s *Service) Update(ctx context.Context, id int32, sub string, in UpdatePar
 	if err != nil {
 		return sqlc.Profile{}, fmt.Errorf("update profile: %w", err)
 	}
-	// Refresh cache with the new value.
+	// Refresh cache with the new value. The delete is not redundant with the set
+	// below: if that set fails, the old profile must not survive until the TTL.
 	s.invalidate(ctx, sub)
 	s.toCache(ctx, p)
 	return p, nil
@@ -173,6 +175,12 @@ func (s *Service) Count(ctx context.Context) (int64, error) {
 func (s *Service) fromCache(ctx context.Context, sub string) (sqlc.Profile, bool) {
 	raw, err := s.cache.GetString(ctx, cacheKey(sub))
 	if err != nil {
+		// A miss is the normal case and stays silent. Anything else means Redis is
+		// failing: the caller still gets its profile from the database, but without
+		// this line every authenticated request would quietly start hitting it.
+		if !errors.Is(err, redis.ErrCacheMiss) {
+			logger.From(ctx).Warn("profile cache read failed", "error", err)
+		}
 		return sqlc.Profile{}, false
 	}
 	var p sqlc.Profile

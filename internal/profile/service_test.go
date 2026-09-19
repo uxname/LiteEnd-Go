@@ -1,7 +1,11 @@
 package profile
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +15,8 @@ import (
 
 	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/db/sqlc"
+	"github.com/uxname/liteend-go/internal/logger"
+	"github.com/uxname/liteend-go/internal/redis"
 )
 
 // fakeQuerier is an in-memory Querier.
@@ -76,9 +82,10 @@ func (f *fakeQuerier) CountProfiles(_ context.Context) (int64, error) {
 
 // fakeCache is an in-memory Cache.
 type fakeCache struct {
-	mu   sync.Mutex
-	data map[string]string
-	hits int
+	mu     sync.Mutex
+	data   map[string]string
+	hits   int
+	getErr error // when set, every read fails with it (Redis is down)
 }
 
 func newFakeCache() *fakeCache { return &fakeCache{data: map[string]string{}} }
@@ -86,9 +93,12 @@ func newFakeCache() *fakeCache { return &fakeCache{data: map[string]string{}} }
 func (c *fakeCache) GetString(_ context.Context, key string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.getErr != nil {
+		return "", c.getErr
+	}
 	v, ok := c.data[key]
 	if !ok {
-		return "", context.Canceled // any non-nil error = miss
+		return "", redis.ErrCacheMiss
 	}
 	c.hits++
 	return v, nil
@@ -132,6 +142,39 @@ func TestFindOrCreateBySub_CreatesThenCaches(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, q.creates, "should not create again")
 	require.Positive(t, c.hits, "second call should hit cache")
+}
+
+// A cache that is down must not look like a cache that is empty: the request is
+// still served from the database, but the failure leaves exactly one WARN line.
+// An ordinary miss leaves none.
+func TestFindOrCreateBySub_CacheReadFailureIsLogged(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		getErr   error
+		wantLogs int
+	}{
+		{"miss is silent", nil, 0},
+		{"failure is logged", errors.New("dial tcp: connection refused"), 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			svc, _, c := newService()
+			c.getErr = tc.getErr
+			var buf bytes.Buffer
+			ctx := logger.Into(context.Background(), slog.New(slog.NewJSONHandler(&buf, nil)))
+
+			p, err := svc.FindOrCreateBySub(ctx, "sub-down")
+			require.NoError(t, err, "a cache failure must fall through to the database")
+			require.Equal(t, "sub-down", p.OidcSub)
+
+			require.Equal(t, tc.wantLogs, strings.Count(buf.String(), `"msg":"profile cache read failed"`))
+			if tc.wantLogs > 0 {
+				require.Contains(t, buf.String(), `"level":"WARN"`)
+				require.Contains(t, buf.String(), "connection refused")
+			}
+		})
+	}
 }
 
 func TestFindOrCreateBySub_ExistingNoCreate(t *testing.T) {
