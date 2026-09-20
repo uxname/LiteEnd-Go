@@ -8,7 +8,7 @@ import (
 )
 
 // BasicAuth guards a route with HTTP Basic Auth using constant-time comparison.
-// Used to keep the app's own dev pages (/dev, /playground, /swagger) from
+// Used to keep the app's own dev pages (/dev, /playground, /docs) from
 // anonymous access — mirroring the auth on the external admin dashboards.
 func BasicAuth(realm, user, pass string) func(http.Handler) http.Handler {
 	userB, passB := []byte(user), []byte(pass)

@@ -208,7 +208,7 @@ walks the deployment itself.
 
 - **GraphQL:** `POST /graphql`. Try it in the playground at `/playground`.
   Live updates use a WebSocket on the same URL (`graphql-transport-ws`).
-- **REST docs:** Swagger UI at `/swagger` (the spec file is at `/openapi.yaml`).
+- **REST docs:** Scalar API reference at `/docs` (the spec file is at `/openapi.yaml`).
 - **Jobs dashboard:** Asynqmon (its own container, port `:5300`).
 - **Storage browser:** Garage Web UI (its own container, port `:5400`).
 
@@ -232,7 +232,7 @@ internal/
   graph/      GraphQL handler, resolvers, error formatting, logging
   i18n/       translations (en/ru)
   health/     the /livez (alive) and /readyz (ready for traffic) probes
-  devtools/   the /dev page, Swagger UI, OpenAPI spec
+  devtools/   the /dev page, the API reference, OpenAPI spec
 db/
   migrations/ database migrations (goose)
   queries/    SQL the code generator turns into Go (sqlc)

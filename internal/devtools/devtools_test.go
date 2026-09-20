@@ -59,13 +59,32 @@ func TestDevLauncher_EscapesValuesAndRefusesScriptLinks(t *testing.T) {
 	require.Contains(t, body, `href="/ok"`)
 }
 
-func TestSwaggerUI_EmbedsSpecURL(t *testing.T) {
+func TestScalarUI_EmbedsSpecURLAndPinnedBundle(t *testing.T) {
 	t.Parallel()
 	rec := httptest.NewRecorder()
-	SwaggerUI("/openapi.yaml").ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/swagger", nil))
+	ScalarUI("/openapi.yaml").ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/docs", nil))
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), `url:"/openapi.yaml"`)
+	require.True(t, strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html"))
+	body := rec.Body.String()
+	require.Contains(t, body, "/openapi.yaml", "the page must point the reference at our own spec")
+	require.Contains(t, body,
+		"https://cdn.jsdelivr.net/npm/@scalar/api-reference@"+scalarVersion+"/dist/browser/standalone.js",
+		"the bundle URL must carry the exact pinned version, never a floating tag")
+	require.NotContains(t, body, "api-reference@latest", "a floating tag would let a compromised release in")
+	require.Contains(t, body, "proxyUrl: ''", "the default proxy.scalar.com must stay switched off")
+	require.Contains(t, body, "withDefaultFonts: false", "the default fonts.scalar.com is not allowed by font-src")
+}
+
+// The reference bundle calls api.scalar.com on load and offers no switch for
+// it, so connect-src is the only thing keeping these pages from talking to
+// third parties. A blanket "https:" would quietly allow it again, which is why
+// the directive is asserted by name rather than only against devCSP.
+func TestDevCSP_ConnectSrcIsNotOpenToEveryHTTPSHost(t *testing.T) {
+	t.Parallel()
+	require.Contains(t, devCSP, "connect-src 'self' https://cdn.jsdelivr.net")
+	require.NotContains(t, devCSP, "connect-src 'self' https:;",
+		"a blanket https: lets the dev pages reach any host, telemetry included")
 }
 
 func TestRelaxCSP_SetsDevPolicy(t *testing.T) {

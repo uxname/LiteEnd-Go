@@ -5,7 +5,7 @@
 - External dashboards (pgweb, RedisInsight, Asynqmon, Garage Web UI) are exposed **only** through
   the Caddy Basic-Auth proxy (`admin_proxy` in `docker-compose.yml`, `Caddyfile`).
   **Never publish their container ports directly.**
-- The app's own dev pages (`/dev`, `/playground`, `/swagger`, `/openapi.yaml`) are
+- The app's own dev pages (`/dev`, `/playground`, `/docs`, `/openapi.yaml`) are
   wrapped with `middleware.BasicAuth` using `ADMIN_USER` / `ADMIN_PASSWORD`.
 - If you add a dashboard, put it behind the proxy too.
 - Garage's **admin API** (`[admin]`, port 3903) is on in `docker-compose.yml` only, for the

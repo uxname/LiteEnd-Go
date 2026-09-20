@@ -94,7 +94,7 @@ type Config struct {
 	S3StudioPort    int `env:"S3_STUDIO_PORT" envDefault:"5400"`
 
 	// Basic-auth credentials guarding the app's dev pages (/dev, /playground,
-	// /swagger). The external dashboards use the same creds via the auth proxy.
+	// /docs). The external dashboards use the same creds via the auth proxy.
 	AdminUser     string `env:"ADMIN_USER" envDefault:"admin"`
 	AdminPassword string `env:"ADMIN_PASSWORD" envDefault:"admin"`
 }

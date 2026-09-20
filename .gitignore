@@ -3,8 +3,6 @@
 /dist/
 *.exe
 
-# Generated docs (swagger)
-/docs/swagger/
 
 # Data & runtime
 data/

@@ -1,5 +1,5 @@
 // Package devtools serves developer-facing helper endpoints: a dev launcher
-// page (/dev) and the OpenAPI spec + Swagger UI (/swagger).
+// page (/dev) and the OpenAPI spec + its reference UI (/docs).
 package devtools
 
 import (
@@ -20,14 +20,15 @@ var openapiSpec []byte
 func OpenAPISpecBytes() []byte { return openapiSpec }
 
 // devCSP allows the CDN-hosted assets and inline scripts/styles that the
-// GraphQL playground and Swagger UI need. It is applied ONLY to those dev-tool
-// pages — the strict default-src 'self' policy stays in force for the API.
+// GraphQL playground and the API reference need. It is applied ONLY to those
+// dev-tool pages — the strict default-src 'self' policy stays in force for the
+// API. Both load from jsdelivr; unpkg.com went out with the UI it served.
 const devCSP = "default-src 'self'; " +
-	"script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; " +
-	"style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com https://fonts.googleapis.com; " +
+	"script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
+	"style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; " +
 	"img-src 'self' data: https:; " +
 	"font-src 'self' data: https://fonts.gstatic.com; " +
-	"connect-src 'self' https:; " +
+	"connect-src 'self' https://cdn.jsdelivr.net; " +
 	"worker-src 'self' blob:"
 
 // RelaxCSP overrides the strict global CSP with devCSP for dev-tool pages.
@@ -51,7 +52,7 @@ type Link struct {
 // devLauncherHTML is the /dev page: markup and stylesheet in one real HTML file,
 // so it is edited with an HTML editor instead of inside Go string literals.
 // Everything is inline + system fonts so the page renders fully offline,
-// independent of the CDN assets the playground/Swagger pages rely on.
+// independent of the CDN assets the playground/reference pages rely on.
 //
 //go:embed dev.html
 var devLauncherHTML string
@@ -82,24 +83,49 @@ func DevLauncher(links []Link) http.HandlerFunc {
 	}
 }
 
-// SwaggerUI serves a Swagger UI page that loads the OpenAPI spec from specURL.
-func SwaggerUI(specURL string) http.HandlerFunc {
-	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>LiteEnd-Go API</title>
-<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css"></head>
-<body><div id="swagger-ui"></div>
-<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-<script>window.onload=()=>{SwaggerUIBundle({url:"` + specURL + `",dom_id:"#swagger-ui"})}</script>
+// scalarVersion pins the API reference bundle EXACTLY — not @latest, not a
+// major range. The page runs third-party JavaScript behind our own basic auth,
+// so a floating tag would let a compromised release walk straight in.
+const scalarVersion = "1.69.2"
+
+// scalarUIHTML renders the reference page. proxyUrl is blanked (the default
+// routes requests through proxy.scalar.com) and withDefaultFonts is off (the
+// default pulls fonts from fonts.scalar.com). The bundle also calls its own
+// registry on api.scalar.com when the page opens, with no option to switch that
+// off, so connect-src above is what actually stops it: these pages talk to
+// jsdelivr and to us, and to nobody else.
+const scalarUIHTML = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>LiteEnd-Go API</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body><div id="app"></div>
+<script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@{{.Version}}/dist/browser/standalone.js"></script>
+<script>Scalar.createApiReference('#app', {url: {{.SpecURL}}, proxyUrl: '', withDefaultFonts: false})</script>
 </body></html>`
+
+// ScalarUI serves an API reference page that loads the OpenAPI spec from
+// specURL. Like the dev launcher it is rendered once through html/template, so
+// specURL is escaped for the JavaScript string it lands in instead of being
+// concatenated into the markup.
+func ScalarUI(specURL string) http.HandlerFunc {
+	var page bytes.Buffer
+	tmpl, err := template.New("scalar").Parse(scalarUIHTML)
+	if err == nil {
+		err = tmpl.Execute(&page, struct{ SpecURL, Version string }{specURL, scalarVersion})
+	}
+
 	return func(w http.ResponseWriter, _ *http.Request) {
+		if err != nil {
+			http.Error(w, "scalar template: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(page))
+		_, _ = w.Write(page.Bytes())
 	}
 }
 
-// OpenAPISpec serves the embedded OpenAPI 3 document (YAML). Swagger UI loads
-// YAML natively. The REST surface is intentionally tiny, so the spec is a
-// hand-maintained artifact (kept honest by a route-sync test) rather than a
-// swaggo codegen pipeline.
+// OpenAPISpec serves the embedded OpenAPI 3 document (YAML), which the
+// reference UI loads natively. The REST surface is intentionally tiny, so the
+// spec is a hand-maintained artifact (kept honest by a route-sync test) rather
+// than a swaggo codegen pipeline.
 func OpenAPISpec() http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/yaml")

@@ -159,7 +159,7 @@ func mountRoutes(r chi.Router, d routeDeps) {
 	// require Basic Auth — no anonymous access.
 	r.With(d.devAuth, devtools.RelaxCSP).Get("/playground", graph.Playground("/graphql"))
 	r.With(d.devAuth, devtools.RelaxCSP).Get("/dev", devtools.DevLauncher(d.devLinks))
-	r.With(d.devAuth, devtools.RelaxCSP).Get("/swagger", devtools.SwaggerUI("/openapi.yaml"))
+	r.With(d.devAuth, devtools.RelaxCSP).Get("/docs", devtools.ScalarUI("/openapi.yaml"))
 	r.With(d.devAuth).Get("/openapi.yaml", devtools.OpenAPISpec())
 
 	// Silence the browser's automatic favicon request.
@@ -172,7 +172,7 @@ func mountRoutes(r chi.Router, d routeDeps) {
 func devLinks(cfg *config.Config) []devtools.Link {
 	return []devtools.Link{
 		{Title: "GraphQL Playground", Desc: "Explore & run GraphQL queries/subscriptions", URL: "/playground", Icon: "◈"},
-		{Title: "Swagger / OpenAPI", Desc: "REST API reference", URL: "/swagger", Icon: "❡"},
+		{Title: "API Reference (Scalar)", Desc: "REST API reference", URL: "/docs", Icon: "❡"},
 		{Title: "Readiness", Desc: "DB and Redis decide it; heap is shown, not judged (liveness: /livez)", URL: "/readyz", Icon: "♥"},
 		{Title: "pgweb (DB browser)", Desc: "Browse Postgres tables — Prisma Studio analog", URL: localhostURL(cfg.DBStudioPort), Icon: "⛁"},
 		{Title: "RedisInsight", Desc: "Inspect Redis keys & streams", URL: localhostURL(cfg.RedisStudioPort), Icon: "⚡"},
