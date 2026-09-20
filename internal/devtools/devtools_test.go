@@ -1,6 +1,7 @@
 package devtools
 
 import (
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -72,6 +73,14 @@ func TestScalarUI_EmbedsSpecURLAndPinnedBundle(t *testing.T) {
 		"https://cdn.jsdelivr.net/npm/@scalar/api-reference@"+scalarVersion+"/dist/browser/standalone.js",
 		"the bundle URL must carry the exact pinned version, never a floating tag")
 	require.NotContains(t, body, "api-reference@latest", "a floating tag would let a compromised release in")
+	// html/template escapes "+" in an attribute value as &#43;, so compare the
+	// unescaped page — that is what the browser's parser sees.
+	require.Contains(t, html.UnescapeString(body), `integrity="`+scalarSRI+`"`,
+		"pinning the version is not enough on its own: without the integrity hash the CDN "+
+			"can serve anything under that version. Recompute after a bump with: "+
+			"curl -sL https://cdn.jsdelivr.net/npm/@scalar/api-reference@<version>/dist/browser/standalone.js "+
+			"| openssl dgst -sha384 -binary | openssl base64 -A")
+	require.Contains(t, body, `crossorigin="anonymous"`, "integrity is ignored without it on a cross-origin script")
 	require.Contains(t, body, "proxyUrl: ''", "the default proxy.scalar.com must stay switched off")
 	require.Contains(t, body, "withDefaultFonts: false", "the default fonts.scalar.com is not allowed by font-src")
 }

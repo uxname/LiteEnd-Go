@@ -88,6 +88,13 @@ func DevLauncher(links []Link) http.HandlerFunc {
 // so a floating tag would let a compromised release walk straight in.
 const scalarVersion = "1.69.2"
 
+// scalarSRI is the subresource-integrity hash of that exact bundle, verified
+// against the npm tarball of the same version. Pinning the version stops a new
+// release from sneaking in; this stops the CDN from serving something else
+// under the pinned one. Bumping scalarVersion without recomputing this leaves a
+// blank page — which is the point, and TestScalarUI_… says how to recompute it.
+const scalarSRI = "sha384-WIChsUVC1uJ+G1lFA6lPYzOUgXAe8dVxUFIZ7lcENNtV34Esuo81NIxsj8EAQeHB"
+
 // scalarUIHTML renders the reference page. proxyUrl is blanked (the default
 // routes requests through proxy.scalar.com) and withDefaultFonts is off (the
 // default pulls fonts from fonts.scalar.com). The bundle also calls its own
@@ -97,7 +104,7 @@ const scalarVersion = "1.69.2"
 const scalarUIHTML = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>LiteEnd-Go API</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
 <body><div id="app"></div>
-<script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@{{.Version}}/dist/browser/standalone.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@{{.Version}}/dist/browser/standalone.js" integrity="{{.SRI}}" crossorigin="anonymous"></script>
 <script>Scalar.createApiReference('#app', {url: {{.SpecURL}}, proxyUrl: '', withDefaultFonts: false})</script>
 </body></html>`
 
@@ -109,7 +116,7 @@ func ScalarUI(specURL string) http.HandlerFunc {
 	var page bytes.Buffer
 	tmpl, err := template.New("scalar").Parse(scalarUIHTML)
 	if err == nil {
-		err = tmpl.Execute(&page, struct{ SpecURL, Version string }{specURL, scalarVersion})
+		err = tmpl.Execute(&page, struct{ SpecURL, Version, SRI string }{specURL, scalarVersion, scalarSRI})
 	}
 
 	return func(w http.ResponseWriter, _ *http.Request) {
