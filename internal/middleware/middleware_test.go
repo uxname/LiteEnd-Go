@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -224,4 +225,62 @@ func TestSecureHeaders_SetsHardeningHeaders(t *testing.T) {
 	require.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
 	require.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"))
 	require.Equal(t, "default-src 'self'", rec.Header().Get("Content-Security-Policy"))
+}
+
+// BasicAuth is the only guard on the dev pages, so every way of getting past it
+// is asserted: a wrong user must fail exactly like a wrong password (the
+// constant-time compare covers both), and a rejection must not leak through to
+// the handler behind it.
+func TestBasicAuth_RejectsEveryCredentialMismatch(t *testing.T) {
+	t.Parallel()
+	const realm, user, pass = "liteend dev tools", "admin", "s3cret"
+
+	for name, tc := range map[string]struct {
+		setAuth  bool
+		user     string
+		pass     string
+		wantCode int
+	}{
+		"correct credentials": {setAuth: true, user: user, pass: pass, wantCode: http.StatusOK},
+		"no Authorization":    {wantCode: http.StatusUnauthorized},
+		"wrong password":      {setAuth: true, user: user, pass: "nope", wantCode: http.StatusUnauthorized},
+		"wrong user":          {setAuth: true, user: "root", pass: pass, wantCode: http.StatusUnauthorized},
+		"empty credentials":   {setAuth: true, wantCode: http.StatusUnauthorized},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			called := false
+			h := BasicAuth(realm, user, pass)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			req := httptest.NewRequest(http.MethodGet, "/dev", nil)
+			if tc.setAuth {
+				req.SetBasicAuth(tc.user, tc.pass)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			require.Equal(t, tc.wantCode, rec.Code)
+			if tc.wantCode == http.StatusOK {
+				require.True(t, called, "the guarded handler must run once the credentials match")
+				return
+			}
+
+			require.False(t, called, "a rejected request must never reach the guarded handler")
+			require.Equal(t, `Basic realm="`+realm+`"`, rec.Header().Get("WWW-Authenticate"),
+				"without the challenge header a browser never offers the login prompt")
+			require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+
+			var payload struct {
+				StatusCode int    `json:"statusCode"`
+				Message    string `json:"message"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload),
+				"the 401 body is the shared httperr envelope, not an empty response")
+			require.Equal(t, http.StatusUnauthorized, payload.StatusCode)
+			require.Equal(t, "Unauthorized", payload.Message)
+		})
+	}
 }
