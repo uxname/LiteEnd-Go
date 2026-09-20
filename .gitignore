@@ -3,7 +3,6 @@
 /dist/
 *.exe
 
-
 # Data & runtime
 data/
 *.log
