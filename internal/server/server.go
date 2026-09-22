@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/uxname/liteend-go/internal/config"
@@ -38,18 +40,7 @@ func New(cfg *config.Config, log *slog.Logger, rdb *redis.Client) *Server {
 	// `http_request` line at all. Inside, the panic is turned into a 500 before
 	// the access log runs, so the worst failures are the ones you can still find
 	// by method/path/status.
-	r.Use(chimw.RequestID)
-	r.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if reqID := chimw.GetReqID(r.Context()); reqID != "" {
-				if len(reqID) > 128 {
-					reqID = reqID[:128]
-				}
-				w.Header().Set("X-Request-Id", reqID)
-			}
-			next.ServeHTTP(w, r)
-		})
-	})
+	r.Use(requestID)
 	r.Use(appmw.ContextLogger(log))           // request-scoped logger (request_id) for logger.From(ctx)
 	r.Use(appmw.RealIP(cfg.TrustedProxyHops)) // client address from X-Forwarded-For
 	r.Use(appmw.RequestLogger(log))
@@ -77,6 +68,25 @@ func New(cfg *config.Config, log *slog.Logger, rdb *redis.Client) *Server {
 	return &Server{cfg: cfg, log: log, router: r}
 }
 
+// clientRequestID is the shape of a request id a client may choose.
+var clientRequestID = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+
+// requestID assigns the request its correlation id and echoes it back. A
+// client-supplied X-Request-Id is kept only when short and plain: the id rides
+// on every log line, GraphQL error and job payload of the request, so anything
+// else is replaced (a 200 KB header used to reach the log in full). Stored
+// under chi's key, so every middleware.GetReqID reader keeps working.
+func requestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.Header.Get(chimw.RequestIDHeader)
+		if !clientRequestID.MatchString(id) {
+			id = uuid.NewString()
+		}
+		w.Header().Set(chimw.RequestIDHeader, id)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), chimw.RequestIDKey, id)))
+	})
+}
+
 // Router exposes the underlying chi router so feature packages can mount routes.
 func (s *Server) Router() *chi.Mux { return s.router }
 
@@ -90,6 +100,7 @@ func (s *Server) Run(ctx context.Context) error {
 		ReadTimeout:       config.ServerReadTimeout,
 		WriteTimeout:      config.ServerWriteTimeout,
 		IdleTimeout:       config.ServerIdleTimeout,
+		MaxHeaderBytes:    config.ServerMaxHeaderBytes,
 	}
 
 	errCh := make(chan error, 1)

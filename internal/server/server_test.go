@@ -150,15 +150,40 @@ func TestRouter_PropagatesRequestIDHeader(t *testing.T) {
 		require.Equal(t, "trace-client-id-777", rec.Header().Get("X-Request-Id"))
 	})
 
-	t.Run("truncates incoming request id longer than 128 characters", func(t *testing.T) {
-		t.Parallel()
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
-		longID := strings.Repeat("b", 200)
-		req.Header.Set("X-Request-Id", longID)
-		srv.Router().ServeHTTP(rec, req)
-		require.Equal(t, http.StatusOK, rec.Code)
-		require.Len(t, rec.Header().Get("X-Request-Id"), 128)
-		require.Equal(t, strings.Repeat("b", 128), rec.Header().Get("X-Request-Id"))
-	})
+	// The id is copied into every log line, GraphQL error and job payload of
+	// the request, so a client may only choose a short, plain one; anything
+	// else is replaced, not truncated (a 200 KB header used to reach the log in
+	// full, and a truncated one is still attacker-shaped).
+	for name, id := range map[string]string{
+		"overlong":             strings.Repeat("b", 200),
+		"with spaces and tags": "<script> alert(1)",
+		"with a slash":         "a/b",
+	} {
+		t.Run("replaces a "+name+" request id", func(t *testing.T) {
+			t.Parallel()
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+			req.Header.Set("X-Request-Id", id)
+			srv.Router().ServeHTTP(rec, req)
+			got := rec.Header().Get("X-Request-Id")
+			require.NotEmpty(t, got)
+			require.NotContains(t, got, id[:3])
+			require.LessOrEqual(t, len(got), 128)
+		})
+	}
+}
+
+// A replaced id is replaced everywhere, not just in the response header.
+func TestRouter_RejectedRequestIDNeverReachesTheLog(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	srv := New(&config.Config{Env: "test", CORSOrigin: []string{"http://localhost:3000"}},
+		slog.New(slog.NewJSONHandler(&buf, nil)), nil)
+	srv.Router().Get("/ping", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	req.Header.Set("X-Request-Id", strings.Repeat("z", 5000))
+
+	srv.Router().ServeHTTP(httptest.NewRecorder(), req)
+
+	require.NotContains(t, buf.String(), "zzzzzzzz")
 }

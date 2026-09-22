@@ -68,6 +68,9 @@ const (
 	ServerWriteTimeout      = 30 * time.Second
 	ServerIdleTimeout       = 60 * time.Second
 	ServerShutdownTimeout   = 15 * time.Second
+	// ServerMaxHeaderBytes caps request headers (Go's default is 1 MiB); a
+	// bearer JWT is a few KiB.
+	ServerMaxHeaderBytes = 64 << 10
 
 	// OIDCHTTPTimeout bounds JWKS/issuer fetches so a hung issuer cannot stall
 	// every authenticated request indefinitely.
