@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -89,12 +90,25 @@ func (f fakeLinks) OwnedBy(_ context.Context, key string, profileID int32) (bool
 
 type fakeEnqueuer struct {
 	calls []string
+	users []int32
 	err   error
 }
 
-func (f *fakeEnqueuer) AddTestJob(_ context.Context, message string) error {
+func (f *fakeEnqueuer) AddTestJob(_ context.Context, userID int32, message string) error {
 	f.calls = append(f.calls, message)
+	f.users = append(f.users, userID)
 	return f.err
+}
+
+// budgetLimiter allows the first budget events and records the keys charged.
+type budgetLimiter struct {
+	budget int
+	keys   []string
+}
+
+func (l *budgetLimiter) Allow(_ context.Context, key string) (bool, time.Duration) {
+	l.keys = append(l.keys, key)
+	return len(l.keys) <= l.budget, time.Minute
 }
 
 type fakeTranslator struct{ out string }
@@ -209,6 +223,43 @@ func TestAddTestJob_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, []string{"ping"}, q.calls)
+	require.Equal(t, []int32{testUserID}, q.users, "the job is scoped to its caller")
+}
+
+// The message becomes a task id, a payload and log fields in shared Redis, so
+// its length is bounded before anything is enqueued.
+func TestAddTestJob_RejectsAnOverlongMessage(t *testing.T) {
+	t.Parallel()
+	q := &fakeEnqueuer{}
+	r := &resolver.Resolver{Queue: q, Log: discardLog()}
+
+	ok, err := r.Mutation().AddTestJob(userCtx(), strings.Repeat("x", config.TestJobMessageMaxLen+1))
+
+	var gqlErr *gqlerror.Error
+	require.ErrorAs(t, err, &gqlErr)
+	require.Equal(t, "BAD_USER_INPUT", gqlErr.Extensions["code"])
+	require.False(t, ok)
+	require.Empty(t, q.calls)
+}
+
+// Every caller has a per-user job quota; it is charged in the resolver so
+// operations over a WebSocket count too.
+func TestAddTestJob_EnforcesThePerUserQuota(t *testing.T) {
+	t.Parallel()
+	q := &fakeEnqueuer{}
+	quota := &budgetLimiter{budget: 1}
+	r := &resolver.Resolver{Queue: q, JobQuota: quota, Log: discardLog()}
+
+	_, err := r.Mutation().AddTestJob(userCtx(), "one")
+	require.NoError(t, err)
+	ok, err := r.Mutation().AddTestJob(userCtx(), "two")
+
+	var gqlErr *gqlerror.Error
+	require.ErrorAs(t, err, &gqlErr)
+	require.Equal(t, "TOO_MANY_REQUESTS", gqlErr.Extensions["code"])
+	require.False(t, ok)
+	require.Equal(t, []string{"one"}, q.calls)
+	require.Equal(t, []string{"rl:job:" + strconv.Itoa(int(testUserID)), "rl:job:" + strconv.Itoa(int(testUserID))}, quota.keys)
 }
 
 func TestAddTestJob_EnqueueError(t *testing.T) {

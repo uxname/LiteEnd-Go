@@ -8,10 +8,14 @@ package resolver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"runtime"
+	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/uxname/liteend-go/internal/auth"
+	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/db/sqlc"
 	"github.com/uxname/liteend-go/internal/graph/generated"
 	"github.com/uxname/liteend-go/internal/graph/model"
@@ -50,13 +54,23 @@ func (r *mutationResolver) UpdateProfile(ctx context.Context, input model.Profil
 
 // AddTestJob is the resolver for the addTestJob field.
 func (r *mutationResolver) AddTestJob(ctx context.Context, message string) (bool, error) {
-	if _, err := auth.Require(ctx); err != nil {
+	user, err := auth.Require(ctx)
+	if err != nil {
 		return false, err
+	}
+	if utf8.RuneCountInString(message) > config.TestJobMessageMaxLen {
+		return false, badInput(fmt.Sprintf("message must be at most %d characters", config.TestJobMessageMaxLen))
 	}
 	if r.Queue == nil {
 		return false, errors.New("service unavailable")
 	}
-	if err := r.Queue.AddTestJob(ctx, message); err != nil {
+	// Charged here, not in HTTP middleware, so operations over a WebSocket count.
+	if r.JobQuota != nil {
+		if allowed, _ := r.JobQuota.Allow(ctx, "rl:job:"+strconv.Itoa(int(user.ID))); !allowed {
+			return false, tooManyRequests()
+		}
+	}
+	if err := r.Queue.AddTestJob(ctx, user.ID, message); err != nil {
 		return false, err
 	}
 	return true, nil

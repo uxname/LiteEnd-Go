@@ -49,6 +49,11 @@ const (
 	// WSPayloadReadLimit caps a single WebSocket frame, matching the query cap.
 	WSPayloadReadLimit = 128 << 10
 
+	// TestJobMessageMaxLen bounds an addTestJob message (it becomes queue data).
+	TestJobMessageMaxLen = 512
+	// TestJobsPerMinute is each user's addTestJob budget.
+	TestJobsPerMinute = 30
+
 	// Profile field limits (enforced before persistence).
 	ProfileDisplayNameMaxLen = 100
 	ProfileBioMaxLen         = 1000

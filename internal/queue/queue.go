@@ -4,11 +4,14 @@ package queue
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"strconv"
 	"time"
 
 	chimw "github.com/go-chi/chi/v5/middleware"
@@ -60,8 +63,9 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// AddTestJob enqueues a test job, deduplicated by message for dedupTTL.
-func (c *Client) AddTestJob(ctx context.Context, message string) error {
+// AddTestJob enqueues a test job for userID, deduplicated per user and message
+// for dedupTTL.
+func (c *Client) AddTestJob(ctx context.Context, userID int32, message string) error {
 	payload, err := json.Marshal(TestJobPayload{
 		Message:   message,
 		Date:      time.Now().UTC().Format(time.RFC3339),
@@ -71,23 +75,32 @@ func (c *Client) AddTestJob(ctx context.Context, message string) error {
 		return fmt.Errorf("marshal test job: %w", err)
 	}
 	task := asynq.NewTask(TaskTypeTest, payload)
+	taskID := testJobTaskID(userID, message)
 
 	_, err = c.client.EnqueueContext(
 		ctx, task,
-		asynq.TaskID("dedup:test:"+message), // dedup by message
-		asynq.Retention(dedupTTL),           // keep id ~60s after completion
+		asynq.TaskID(taskID),      // dedup by user and message
+		asynq.Retention(dedupTTL), // keep id ~60s after completion
 		asynq.MaxRetry(maxRetry),
 	)
 	// A conflicting id means the same message is already queued/recent — that is
 	// the intended dedup behaviour, so report success.
 	if errors.Is(err, asynq.ErrTaskIDConflict) || errors.Is(err, asynq.ErrDuplicateTask) {
-		logger.From(ctx).Debug("test job deduplicated", "message", message)
+		logger.From(ctx).Debug("test job deduplicated", "task_id", taskID)
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("enqueue test job: %w", err)
 	}
 	return nil
+}
+
+// testJobTaskID is the dedup id of a test job. It is scoped to the caller, so
+// one user's message never swallows another user's identical one, and it is a
+// digest, never the raw message: the task id rides on every job log line.
+func testJobTaskID(userID int32, message string) string {
+	sum := sha256.Sum256([]byte(strconv.FormatInt(int64(userID), 10) + ":" + message))
+	return "dedup:test:" + hex.EncodeToString(sum[:])
 }
 
 // Worker runs the background job processor.
@@ -215,10 +228,12 @@ func (w *Worker) handleTest(ctx context.Context, t *asynq.Task) error {
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return fmt.Errorf("unmarshal test payload: %w", err)
 	}
+	// The message is user text: log its size, never its content (mutation
+	// variables are kept out of the GraphQL log for the same reason).
 	log := logger.From(ctx)
-	log.Info("processing test job", "message", p.Message, "date", p.Date)
+	log.Info("processing test job", "message_len", len(p.Message), "date", p.Date)
 	time.Sleep(time.Second) // mirror the TS 1s simulated work
-	log.Info("finished test job", "message", p.Message)
+	log.Info("finished test job", "message_len", len(p.Message))
 	return nil
 }
 

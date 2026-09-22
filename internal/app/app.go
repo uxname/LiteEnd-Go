@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -107,6 +108,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 		Profiles: profiles,
 		PubSub:   pubsub,
 		Queue:    queueClient,
+		JobQuota: appmw.NewLimiter(rdb.Raw(), config.TestJobsPerMinute, time.Minute),
 		I18n:     translator,
 		Files:    uploadSvc,
 		Log:      log,

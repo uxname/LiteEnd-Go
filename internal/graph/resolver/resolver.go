@@ -4,6 +4,7 @@ package resolver
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/vektah/gqlparser/v2/gqlerror"
@@ -49,11 +50,19 @@ func acquireSubscription(ctx context.Context) (release func(), ok bool) {
 	}
 }
 
+// clientError is a GraphQL error with a client-facing code, which the error
+// presenter neither masks nor logs as internal.
+func clientError(msg, code string, status int) *gqlerror.Error {
+	return &gqlerror.Error{Message: msg, Extensions: map[string]any{"code": code, "statusCode": status}}
+}
+
+func tooManyRequests() *gqlerror.Error {
+	return clientError("Too Many Requests", "TOO_MANY_REQUESTS", http.StatusTooManyRequests)
+}
+
 func tooManySubscriptions() *gqlerror.Error {
-	return &gqlerror.Error{
-		Message:    "too many active subscriptions on this connection",
-		Extensions: map[string]any{"code": "TOO_MANY_SUBSCRIPTIONS", "statusCode": 429},
-	}
+	return clientError("too many active subscriptions on this connection", "TOO_MANY_SUBSCRIPTIONS",
+		http.StatusTooManyRequests)
 }
 
 // ProfilePubSub publishes/subscribes profile-updated events.
@@ -79,7 +88,12 @@ type FileLinks interface {
 
 // Enqueuer adds jobs to the background queue (wired in the queue phase).
 type Enqueuer interface {
-	AddTestJob(ctx context.Context, message string) error
+	AddTestJob(ctx context.Context, userID int32, message string) error
+}
+
+// RateLimiter spends one event of a named budget (middleware.Limiter).
+type RateLimiter interface {
+	Allow(ctx context.Context, key string) (allowed bool, retryAfter time.Duration)
 }
 
 // Translator resolves i18n messages (wired in the i18n phase).
@@ -92,6 +106,8 @@ type Resolver struct {
 	Profiles ProfileService
 	PubSub   ProfilePubSub
 	Queue    Enqueuer
+	// JobQuota is the per-user budget for addTestJob (nil: unlimited, tests).
+	JobQuota RateLimiter
 	I18n     Translator
 	Files    FileLinks
 	Log      *slog.Logger

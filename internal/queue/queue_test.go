@@ -34,6 +34,32 @@ func TestHandleTest_ProcessesValidPayload(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// The task id deduplicates per caller (one user's message must not silently
+// swallow another user's) and never carries the raw message, which would
+// otherwise land in every job log line as task_id.
+func TestTestJobTaskID_IsPerUserAndOpaque(t *testing.T) {
+	t.Parallel()
+	a := testJobTaskID(1, "secret message")
+
+	require.Equal(t, a, testJobTaskID(1, "secret message"), "same user and message dedup")
+	require.NotEqual(t, a, testJobTaskID(2, "secret message"), "another user gets their own job")
+	require.NotContains(t, a, "secret")
+	require.LessOrEqual(t, len(a), 80)
+}
+
+// The worker logs the job, not the user's text.
+func TestHandleTest_DoesNotLogTheMessage(t *testing.T) {
+	t.Parallel()
+	var logs bytes.Buffer
+	w := &Worker{log: slog.New(slog.NewJSONHandler(&logs, nil))}
+	ctx := logger.Into(context.Background(), w.log)
+	task := asynq.NewTask(TaskTypeTest, []byte(`{"message":"secret message","date":"2026-01-01T00:00:00Z"}`))
+
+	require.NoError(t, w.handleTest(ctx, task))
+	require.NotContains(t, logs.String(), "secret message")
+	require.Contains(t, logs.String(), `"message_len":14`)
+}
+
 func TestRecoverer_TurnsPanicIntoError(t *testing.T) {
 	t.Parallel()
 	w := testWorker()

@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"fmt"
+	"net/http"
 	"net/url"
 	"unicode/utf8"
 
@@ -15,10 +16,7 @@ import (
 // keeps the error out of the production error-masking path (it is safe to show),
 // while the error presenter still attaches a requestId.
 func badInput(msg string) *gqlerror.Error {
-	return &gqlerror.Error{
-		Message:    msg,
-		Extensions: map[string]any{"code": "BAD_USER_INPUT", "statusCode": 400},
-	}
+	return clientError(msg, "BAD_USER_INPUT", http.StatusBadRequest)
 }
 
 // validateProfileUpdate enforces length and format limits on profile fields
