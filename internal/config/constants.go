@@ -25,8 +25,15 @@ const (
 	// GraphQLComplexityLimit caps the cost of a single operation, bounding
 	// resource use from deeply nested or expensive queries.
 	GraphQLComplexityLimit = 200
-	// GraphQLQueryCacheSize is the LRU size for parsed query documents.
+	// GraphQLQueryCacheSize is the LRU size for parsed query documents. An entry
+	// retains its query text, so the cache holds at most this many times
+	// GraphQLMaxQueryBytes.
 	GraphQLQueryCacheSize = 1000
+	// GraphQLMaxQueryBytes caps a raw query before it is parsed or cached.
+	GraphQLMaxQueryBytes = 128 << 10
+	// GraphQLParserTokenLimit caps the tokens the parser reads, bounding the
+	// super-linear validation cost of dense queries.
+	GraphQLParserTokenLimit = 5000
 	// GraphQLAPQCacheSize is the LRU size for automatic persisted queries.
 	GraphQLAPQCacheSize = 100
 	// WSKeepAlivePingInterval is the keep-alive interval of the legacy

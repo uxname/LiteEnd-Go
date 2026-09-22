@@ -5,6 +5,7 @@ package graph
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -97,7 +98,9 @@ func newHandler(
 	srv.AddTransport(transport.Options{})
 	srv.AddTransport(transport.GET{})
 	srv.AddTransport(transport.POST{})
-	srv.AddTransport(transport.MultipartForm{})
+	// No MultipartForm transport: the schema has no Upload scalar (files go
+	// through REST /upload), and multipart only offered a CORS-simple way to
+	// send a mutation from another site.
 
 	// coder/websocket (gqlgen's default adapter since it dropped gorilla) only
 	// authorizes same-origin handshakes, but the SPA lives on another origin — so
@@ -158,6 +161,16 @@ func newHandler(
 		srv.AroundOperations(chargeWebsocketOperations(limiter))
 	}
 
+	// Bound the cost of a query before gqlgen spends anything on it: parsing and
+	// validation run, and the validated document enters the query cache (keyed
+	// by its full text), before FixedComplexityLimit ever sees the operation.
+	// The byte cap also bounds what the caches can hold; the token cap bounds
+	// the super-linear validation of small but dense queries.
+	srv.Use(queryByteLimit(config.GraphQLMaxQueryBytes))
+	srv.SetParserTokenLimit(config.GraphQLParserTokenLimit)
+	// Suggestions ("Did you mean …") would enumerate the schema that disabled
+	// introspection hides.
+	srv.SetDisableSuggestion(isProd)
 	srv.SetQueryCache(lru.New[*ast.QueryDocument](config.GraphQLQueryCacheSize))
 	// Introspection is a useful dev affordance but leaks the full schema; disable
 	// it in production.
@@ -187,6 +200,25 @@ func newHandler(
 		ctx := context.WithValue(req.Context(), rateKeyKey{}, middleware.RateKey(req))
 		srv.ServeHTTP(w, req.WithContext(ctx))
 	})
+}
+
+// queryByteLimit rejects a raw query longer than its value before it is parsed.
+// Registered before the APQ extension, so an oversized query never enters the
+// persisted-query cache either.
+type queryByteLimit int
+
+func (queryByteLimit) ExtensionName() string { return "QueryByteLimit" }
+
+func (queryByteLimit) Validate(graphql.ExecutableSchema) error { return nil }
+
+func (l queryByteLimit) MutateOperationParameters(_ context.Context, p *graphql.RawParams) *gqlerror.Error {
+	if len(p.Query) <= int(l) {
+		return nil
+	}
+	return &gqlerror.Error{
+		Message:    fmt.Sprintf("query exceeds %d bytes", int(l)),
+		Extensions: map[string]any{"code": "QUERY_TOO_LARGE", "statusCode": http.StatusRequestEntityTooLarge},
+	}
 }
 
 // chargeWebsocketOperations spends one event of the upgrade request's rate

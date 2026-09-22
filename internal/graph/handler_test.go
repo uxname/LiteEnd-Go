@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	coderws "github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
@@ -104,4 +108,91 @@ func TestRecoverPanic_LogsStructuredAndCorrelated(t *testing.T) {
 	require.Equal(t, "boom", line["panic"])
 	require.Equal(t, "req-9", line["request_id"])
 	require.NotEmpty(t, line["stack"])
+}
+
+// postGraphQL sends one JSON GraphQL request to h and returns the response.
+func postGraphQL(t *testing.T, h http.Handler, query string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"query": query})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/graphql", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func prodHandler() http.Handler {
+	return NewHandler(&resolver.Resolver{}, auth.NewMiddleware(nil, nil, false), nil, true, nil)
+}
+
+// A query over the size cap is refused before parse, validation and the query
+// cache, so it can neither burn CPU nor stay resident in memory.
+func TestHandler_OversizedQueryRejectedBeforeParse(t *testing.T) {
+	t.Parallel()
+	query := "{ __typename }\n#" + strings.Repeat("x", 129<<10)
+
+	rec := postGraphQL(t, prodHandler(), query)
+
+	require.Contains(t, rec.Body.String(), `"QUERY_TOO_LARGE"`)
+}
+
+// Rejected queries must not be retained: before the fix every validated
+// document was cached (keyed by its full text) before the complexity check.
+func TestHandler_RejectedLargeQueriesAreNotRetained(t *testing.T) { //nolint:paralleltest // measures the process heap
+	h := prodHandler()
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	for i := range 20 {
+		// valid, over-complexity, and just under the old 10 MiB body cap's reach
+		query := fmt.Sprintf("{ a%d%s: __typename %s }", i, strings.Repeat("x", 1<<20), strings.Repeat("__typename ", 300))
+		_ = postGraphQL(t, h, query)
+	}
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	runtime.KeepAlive(h) // a live server keeps its query cache; so must the test
+
+	grown := int64(after.HeapAlloc) - int64(before.HeapAlloc)
+	require.Less(t, grown, int64(5<<20), "20 rejected 1 MiB queries retained %d bytes", grown)
+}
+
+// The parser token limit bounds the super-linear validation cost of small but
+// dense queries (repeated fields).
+func TestHandler_OverTokenQueryRejectedFast(t *testing.T) {
+	t.Parallel()
+	query := "{ " + strings.Repeat("__typename ", 6000) + "}"
+
+	start := time.Now()
+	rec := postGraphQL(t, prodHandler(), query)
+
+	require.Contains(t, rec.Body.String(), "GRAPHQL_PARSE_FAILED")
+	require.Less(t, time.Since(start), 200*time.Millisecond)
+}
+
+// Introspection is off in production; field suggestions must be too, or the
+// schema can still be enumerated one typo at a time.
+func TestHandler_NoFieldSuggestionsInProduction(t *testing.T) {
+	t.Parallel()
+	rec := postGraphQL(t, prodHandler(), "{ __typenam }")
+
+	require.NotContains(t, rec.Body.String(), "Did you mean")
+}
+
+// The schema has no Upload scalar (files go through REST /upload), so the
+// multipart transport only offered a CORS-simple way to send mutations.
+func TestHandler_MultipartGraphQLRequestsNotAccepted(t *testing.T) {
+	t.Parallel()
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+	require.NoError(t, w.WriteField("operations", `{"query":"{ __typename }"}`))
+	require.NoError(t, w.WriteField("map", `{}`))
+	require.NoError(t, w.Close())
+	req := httptest.NewRequest(http.MethodPost, "/graphql", &body)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	rec := httptest.NewRecorder()
+
+	prodHandler().ServeHTTP(rec, req)
+
+	require.NotContains(t, rec.Body.String(), `"__typename"`)
 }
