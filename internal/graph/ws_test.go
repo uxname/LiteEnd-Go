@@ -71,12 +71,12 @@ func wsTestServer(t *testing.T, h http.Handler) (wsURL string, logs *syncBuffer)
 		h.ServeHTTP(w, r.WithContext(logger.Into(r.Context(), log)))
 	}))
 	t.Cleanup(srv.Close)
-	return strings.Replace(srv.URL, "http", "ws", 1), logs
+	return strings.Replace(srv.URL, "http", "ws", 1) + "/graphql", logs
 }
 
 // mockHandler is NewHandler in mock-auth mode, so connection_init authenticates.
 func mockHandler(r *resolver.Resolver) http.Handler {
-	return NewHandler(r, auth.NewMiddleware(nil, mockProfiles{}, true), true, nil)
+	return NewHandler(r, auth.NewMiddleware(nil, mockProfiles{}, true), nil, true, nil)
 }
 
 type wsFrame struct {
@@ -198,7 +198,7 @@ func wsCloseStatus(t *testing.T, conn *coderws.Conn, within time.Duration) coder
 // user), so connection_init without valid credentials must close it with 4403.
 func TestWebsocket_AnonymousInitRejected(t *testing.T) {
 	t.Parallel()
-	url, _ := wsTestServer(t, NewHandler(&resolver.Resolver{}, auth.NewMiddleware(nil, nil, false), true, nil))
+	url, _ := wsTestServer(t, NewHandler(&resolver.Resolver{}, auth.NewMiddleware(nil, nil, false), nil, true, nil))
 	conn := wsDial(t, url, map[string]any{})
 
 	require.Equal(t, coderws.StatusCode(wsCloseUnauthorized), wsCloseStatus(t, conn, 5*time.Second))
@@ -208,7 +208,7 @@ func TestWebsocket_AnonymousInitRejected(t *testing.T) {
 // connection_init must be closed by the transport's own timeout.
 func TestWebsocket_SilentSocketClosedAfterInitTimeout(t *testing.T) {
 	t.Parallel()
-	h := newHandler(&resolver.Resolver{}, expiringAuth{}, true, nil,
+	h := newHandler(&resolver.Resolver{}, expiringAuth{}, nil, true, nil,
 		wsLimits{initTimeout: 200 * time.Millisecond, pingPong: time.Hour})
 	url, _ := wsTestServer(t, h)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -227,7 +227,7 @@ func TestWebsocket_SilentSocketClosedAfterInitTimeout(t *testing.T) {
 // reaped instead of being held forever.
 func TestWebsocket_IdleSocketWithoutPongClosed(t *testing.T) {
 	t.Parallel()
-	h := newHandler(&resolver.Resolver{}, expiringAuth{}, true, nil,
+	h := newHandler(&resolver.Resolver{}, expiringAuth{}, nil, true, nil,
 		wsLimits{initTimeout: time.Second, pingPong: 100 * time.Millisecond})
 	url, _ := wsTestServer(t, h)
 	conn := wsDial(t, url, map[string]any{})
@@ -238,11 +238,68 @@ func TestWebsocket_IdleSocketWithoutPongClosed(t *testing.T) {
 // A socket must not outlive the bearer token that authenticated it.
 func TestWebsocket_SocketClosedWhenTokenExpires(t *testing.T) {
 	t.Parallel()
-	h := newHandler(&resolver.Resolver{}, expiringAuth{exp: time.Now().Add(300 * time.Millisecond)}, true, nil,
+	h := newHandler(&resolver.Resolver{}, expiringAuth{exp: time.Now().Add(300 * time.Millisecond)}, nil, true, nil,
 		wsLimits{initTimeout: time.Second, pingPong: time.Hour})
 	url, _ := wsTestServer(t, h)
 	conn := wsDial(t, url, map[string]any{})
 	wsAck(t, conn)
 
 	_ = wsCloseStatus(t, conn, 3*time.Second)
+}
+
+// countingLimiter allows the first budget events and records every key charged.
+type countingLimiter struct {
+	mu     sync.Mutex
+	budget int
+	keys   []string
+}
+
+func (l *countingLimiter) Allow(_ context.Context, key string) (bool, time.Duration) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.keys = append(l.keys, key)
+	return len(l.keys) <= l.budget, time.Second
+}
+
+func (l *countingLimiter) charged() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.keys...)
+}
+
+var testLimits = wsLimits{initTimeout: time.Second, pingPong: time.Hour}
+
+// The HTTP rate limiter sees only the upgrade request, so every operation sent
+// over the socket must be charged to the same per-IP budget by the handler.
+func TestWebsocket_OperationsDrawFromTheHTTPRateBudget(t *testing.T) {
+	t.Parallel()
+	lim := &countingLimiter{budget: 2}
+	url, _ := wsTestServer(t, newHandler(&resolver.Resolver{}, expiringAuth{}, lim, true, nil, testLimits))
+	conn := wsDial(t, url, map[string]any{})
+	wsAck(t, conn)
+
+	require.Equal(t, []string{"next", "complete"}, frameTypes(wsRun(t, conn, "1", "{ __typename }")))
+	require.Equal(t, []string{"next", "complete"}, frameTypes(wsRun(t, conn, "2", "{ __typename }")))
+	over := wsRun(t, conn, "3", "{ __typename }")
+
+	require.Equal(t, "next", over[0].Type)
+	require.Contains(t, string(over[0].Payload), `"TOO_MANY_REQUESTS"`)
+	require.Equal(t, []string{"rl:auth:127.0.0.1", "rl:auth:127.0.0.1", "rl:auth:127.0.0.1"}, lim.charged())
+}
+
+// HTTP operations are already charged by the RateLimit middleware; the handler
+// must not charge them a second time.
+func TestHTTP_OperationIsNotChargedTwice(t *testing.T) {
+	t.Parallel()
+	lim := &countingLimiter{budget: 0}
+	h := newHandler(&resolver.Resolver{}, expiringAuth{}, lim, true, nil, testLimits)
+	req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(`{"query":"{ __typename }"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotContains(t, rec.Body.String(), "TOO_MANY_REQUESTS")
+	require.Empty(t, lim.charged())
 }

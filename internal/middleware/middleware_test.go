@@ -18,7 +18,7 @@ func TestC8_RateKeyUsesProxyAppendedAddress(t *testing.T) {
 	t.Parallel()
 	var key, remote string
 	h := RealIP(1)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		key, remote = rateKey(r), r.RemoteAddr
+		key, remote = RateKey(r), r.RemoteAddr
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/graphql", nil)
@@ -36,7 +36,7 @@ func TestC8_RateKeyUsesProxyAppendedAddress(t *testing.T) {
 func TestC8_ForgedHeadersWithoutTrustedProxyGetNoNewBucket(t *testing.T) {
 	t.Parallel()
 	var key string
-	h := RealIP(0)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { key = rateKey(r) }))
+	h := RealIP(0)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { key = RateKey(r) }))
 
 	for _, forged := range []string{"1.2.3.4", "1.2.3.5"} {
 		req := httptest.NewRequest(http.MethodGet, "/graphql", nil)
@@ -55,7 +55,7 @@ func TestC8_ForgedHeadersWithoutTrustedProxyGetNoNewBucket(t *testing.T) {
 func TestC8_ChainShorterThanTrustedHopsFallsBackToSocket(t *testing.T) {
 	t.Parallel()
 	var key string
-	h := RealIP(2)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { key = rateKey(r) }))
+	h := RealIP(2)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { key = RateKey(r) }))
 
 	req := httptest.NewRequest(http.MethodGet, "/graphql", nil)
 	req.RemoteAddr = "203.0.113.9:5555"
@@ -111,7 +111,7 @@ func TestC8_NonIPForwardedEntryFallsBackToSocket(t *testing.T) {
 func TestC8_PortlessRemoteAddrStillResolves(t *testing.T) {
 	t.Parallel()
 	var key string
-	h := RealIP(1)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { key = rateKey(r) }))
+	h := RealIP(1)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { key = RateKey(r) }))
 
 	req := httptest.NewRequest(http.MethodGet, "/graphql", nil)
 	req.RemoteAddr = "172.20.0.5"
@@ -129,7 +129,7 @@ func TestC8_PortlessRemoteAddrStillResolves(t *testing.T) {
 func TestC8_RepeatedXForwardedForLinesFormOneChain(t *testing.T) {
 	t.Parallel()
 	var key string
-	h := RealIP(1)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { key = rateKey(r) }))
+	h := RealIP(1)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { key = RateKey(r) }))
 
 	req := httptest.NewRequest(http.MethodGet, "/graphql", nil)
 	req.RemoteAddr = "172.20.0.5:44120"            // the proxy's socket address
@@ -157,7 +157,7 @@ func TestC8_ForwardedEntryWithPortResolvesToItsAddress(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			var key string
-			h := RealIP(1)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { key = rateKey(r) }))
+			h := RealIP(1)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { key = RateKey(r) }))
 
 			req := httptest.NewRequest(http.MethodGet, "/graphql", nil)
 			req.RemoteAddr = "172.20.0.5:44120"
@@ -177,7 +177,7 @@ func TestC8_ForwardedEntryWithPortResolvesToItsAddress(t *testing.T) {
 func TestC8_BracketedIPv6WithoutPortResolvesToItsAddress(t *testing.T) {
 	t.Parallel()
 	var key string
-	h := RealIP(1)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { key = rateKey(r) }))
+	h := RealIP(1)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { key = RateKey(r) }))
 
 	req := httptest.NewRequest(http.MethodGet, "/graphql", nil)
 	req.RemoteAddr = "172.20.0.5:44120"

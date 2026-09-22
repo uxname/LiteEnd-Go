@@ -10,6 +10,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/handler/extension"
 	"github.com/99designs/gqlgen/graphql/handler/lru"
@@ -25,6 +26,7 @@ import (
 	"github.com/uxname/liteend-go/internal/graph/generated"
 	"github.com/uxname/liteend-go/internal/graph/resolver"
 	"github.com/uxname/liteend-go/internal/logger"
+	"github.com/uxname/liteend-go/internal/middleware"
 )
 
 // wsCloseUnauthorized closes a WebSocket whose connection_init carried no
@@ -46,20 +48,36 @@ type wsLimits struct {
 	tokenGrace  time.Duration // how long a socket may outlive its bearer token
 }
 
-type connCancelKey struct{}
+// opLimiter charges one event to a rate budget (middleware.Limiter).
+type opLimiter interface {
+	Allow(ctx context.Context, key string) (allowed bool, retryAfter time.Duration)
+}
+
+type (
+	connCancelKey struct{}
+	rateKeyKey    struct{}
+	wsConnKey     struct{}
+)
 
 // NewHandler builds the GraphQL HTTP handler (queries, mutations, subscriptions).
 // isProd disables introspection and masks internal error messages in production.
 // allowedOrigins is the HTTP CORS allowlist, reused to authorize cross-origin
 // WebSocket handshakes; empty means no cross-origin handshake is allowed, in
-// every environment.
+// every environment. limiter is the per-IP HTTP budget (nil without Redis):
+// operations sent over a WebSocket are charged to it here, since the HTTP
+// middleware only ever sees the upgrade request.
 func NewHandler(
 	r *resolver.Resolver,
 	mw *auth.Middleware,
+	limiter *middleware.Limiter,
 	isProd bool,
 	allowedOrigins []string,
 ) http.Handler {
-	return newHandler(r, mw, isProd, allowedOrigins, wsLimits{
+	var lim opLimiter
+	if limiter != nil {
+		lim = limiter
+	}
+	return newHandler(r, mw, lim, isProd, allowedOrigins, wsLimits{
 		initTimeout: config.WSInitTimeout,
 		pingPong:    config.WSPingPongInterval,
 		tokenGrace:  config.OIDCClockSkew,
@@ -69,6 +87,7 @@ func NewHandler(
 func newHandler(
 	r *resolver.Resolver,
 	mw credsAuthenticator,
+	limiter opLimiter,
 	isProd bool,
 	allowedOrigins []string,
 	limits wsLimits,
@@ -117,7 +136,7 @@ func newHandler(
 				ctx = transport.WithWebsocketCloseCode(ctx, wsCloseUnauthorized)
 				return transport.AppendCloseReason(ctx, "unauthorized"), nil, errUnauthorizedSocket
 			}
-			ctx = auth.WithUser(ctx, user)
+			ctx = context.WithValue(auth.WithUser(ctx, user), wsConnKey{}, true)
 			if !expiresAt.IsZero() {
 				// The socket must not outlive the token that opened it: gqlgen
 				// closes the connection when this context ends.
@@ -134,6 +153,10 @@ func newHandler(
 			}
 		},
 	})
+
+	if limiter != nil {
+		srv.AroundOperations(chargeWebsocketOperations(limiter))
+	}
 
 	srv.SetQueryCache(lru.New[*ast.QueryDocument](config.GraphQLQueryCacheSize))
 	// Introspection is a useful dev affordance but leaks the full schema; disable
@@ -157,7 +180,34 @@ func newHandler(
 
 	srv.SetErrorPresenter(newErrorPresenter(isProd))
 
-	return srv
+	// Remember the caller's rate key before a possible upgrade: RealIP has
+	// already resolved the client address, and the socket's operations inherit
+	// this request context.
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		ctx := context.WithValue(req.Context(), rateKeyKey{}, middleware.RateKey(req))
+		srv.ServeHTTP(w, req.WithContext(ctx))
+	})
+}
+
+// chargeWebsocketOperations spends one event of the upgrade request's rate
+// budget per operation sent over a WebSocket. HTTP operations are skipped: the
+// RateLimit middleware already charged their request.
+func chargeWebsocketOperations(limiter opLimiter) graphql.OperationMiddleware {
+	return func(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
+		key, _ := ctx.Value(rateKeyKey{}).(string)
+		if isWS, _ := ctx.Value(wsConnKey{}).(bool); !isWS || key == "" {
+			return next(ctx)
+		}
+		if allowed, _ := limiter.Allow(ctx, key); allowed {
+			return next(ctx)
+		}
+		// OneShot, not a bare response: a WebSocket keeps pulling the handler
+		// until it returns nil, so anything else would loop.
+		return graphql.OneShot(&graphql.Response{Errors: gqlerror.List{{
+			Message:    "Too Many Requests",
+			Extensions: map[string]any{"code": "TOO_MANY_REQUESTS", "statusCode": http.StatusTooManyRequests},
+		}}})
+	}
 }
 
 // recoverPanic turns a recovered resolver panic into a structured, correlated

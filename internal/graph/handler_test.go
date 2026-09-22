@@ -28,7 +28,7 @@ const originSelf = "self"
 func wsHandshake(t *testing.T, allowedOrigins []string, origin string) int {
 	t.Helper()
 	mw := auth.NewMiddleware(nil, nil, true)
-	srv := httptest.NewServer(NewHandler(&resolver.Resolver{}, mw, false, allowedOrigins))
+	srv := httptest.NewServer(NewHandler(&resolver.Resolver{}, mw, nil, false, allowedOrigins))
 	t.Cleanup(srv.Close)
 
 	if origin == originSelf {

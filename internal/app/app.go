@@ -107,7 +107,8 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 		Files:    uploadSvc,
 		Log:      log,
 	}
-	gqlHandler := graph.NewHandler(res, authMW, cfg.IsProduction(), cfg.CORSOrigin)
+	gqlHandler := graph.NewHandler(res, authMW, appmw.NewLimiter(rdb.Raw(), config.RateLimitMax, config.RateLimitWindow),
+		cfg.IsProduction(), cfg.CORSOrigin)
 
 	mountRoutes(srv.Router(), routeDeps{
 		live:       health.Live(),
