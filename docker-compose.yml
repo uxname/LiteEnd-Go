@@ -109,7 +109,7 @@ services:
     # Dockerfile — one source of truth, honored by plain `docker run` too.
 
   db:
-    image: postgres:18.1-alpine
+    image: postgres:18.1-alpine@sha256:aa6eb304ddb6dd26df23d05db4e5cb05af8951cda3e0dc57731b771e0ef4ab29
     <<: *common-restart-policy
     deploy:
       <<: *db-resources
@@ -132,7 +132,7 @@ services:
       retries: 5
 
   redis:
-    image: redis:8.4-alpine
+    image: redis:8.4-alpine@sha256:1040cf74af3c0684b2d1b436577e85bda646b3508039d4fb967f9f294a597367
     <<: *common-restart-policy
     deploy:
       <<: *small-resources
@@ -155,7 +155,7 @@ services:
   # S3-compatible object storage for uploaded files. Every replica of the app
   # writes here, so a file stored by one is readable through all of them.
   garage:
-    image: dxflrs/garage:v2.1.0
+    image: dxflrs/garage:v2.1.0@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a
     <<: *common-restart-policy
     deploy:
       <<: *db-resources
@@ -198,7 +198,7 @@ services:
   # for `type: image` mounts). Every step is skipped when it is already there,
   # so a restart or an `up` on an existing volume is a no-op.
   garage-init:
-    image: alpine:3.21
+    image: alpine:3.21@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507
     restart: "no"
     deploy:
       <<: *small-resources
@@ -274,7 +274,7 @@ services:
 
   # pgweb: DB browser (Prisma Studio analog).
   db_studio:
-    image: sosedoff/pgweb:0.17.0
+    image: sosedoff/pgweb:0.17.0@sha256:a5256d416e2e8b92d69a4459058e3eca33a9f075d8325491644411d0bc3bd70b
     <<: *common-restart-policy
     deploy:
       <<: *small-resources
@@ -290,7 +290,7 @@ services:
   # RedisInsight: official Redis GUI. RI_REDIS_* pre-configures the "liteend"
   # connection (visible after accepting the one-time EULA prompt).
   redis_studio:
-    image: redis/redisinsight:3.8.0
+    image: redis/redisinsight:3.8.0@sha256:b5e19ee240abef6edb435871b90ff8a210995422e8e018ab61c0339d318a1f84
     <<: *common-restart-policy
     deploy:
       <<: *small-resources
@@ -308,7 +308,7 @@ services:
 
   # Asynqmon: queue dashboard (Bull Board analog).
   asynqmon:
-    image: hibiken/asynqmon:0.7.2
+    image: hibiken/asynqmon:0.7.2@sha256:ac80bcffd2f9da20d15a8512fc96287e91e13558ad8718df367f0a0e0d0eda81
     <<: *common-restart-policy
     # Static Go binary that writes nothing — safe under any numeric non-root uid.
     user: "65532:65532"
@@ -329,7 +329,7 @@ services:
   # so it needs no S3 credentials of its own. Its built-in login
   # (AUTH_USER_PASS) stays off: the auth proxy below is the one door.
   s3_studio:
-    image: khairul169/garage-webui:1.1.0
+    image: khairul169/garage-webui:1.1.0@sha256:17c793551873155065bf9a022dabcde874de808a1f26e648d4b82e168806439c
     <<: *common-restart-policy
     # Static Go binary that writes nothing (sessions and cache live in memory)
     # — safe under any numeric non-root uid.
@@ -355,7 +355,7 @@ services:
   # Auth proxy: enforces HTTP Basic Auth in front of every admin dashboard, so
   # none of them is reachable anonymously. Backends publish no host ports.
   admin_proxy:
-    image: caddy:2-alpine
+    image: caddy:2-alpine@sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e
     <<: *common-restart-policy
     # The caddy image runs as root by default; this is a plain HTTP basic-auth
     # proxy (no TLS cert storage), so run non-root and point Caddy's state dirs

@@ -9,6 +9,7 @@ data/
 
 # Env
 .env
+.env.*
 !.env.example
 
 # Editor / OS

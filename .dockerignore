@@ -9,6 +9,10 @@ coverage.out
 coverage.html
 *.log
 .env
+.env.*
+.agents
+.beads
+docs
 README.md
 AGENTS.md
 .golangci.yml
