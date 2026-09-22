@@ -27,6 +27,11 @@ func (*LoggingExtension) InterceptResponse(ctx context.Context, next graphql.Res
 	start := time.Now()
 	oc := graphql.GetOperationContext(ctx)
 	resp := next(ctx)
+	// Streaming transports (WebSocket, subscriptions) pull the handler until it
+	// returns nil to mark end of stream; that is not an operation to log.
+	if resp == nil {
+		return nil
+	}
 
 	opName := oc.OperationName
 	if opName == "" {
