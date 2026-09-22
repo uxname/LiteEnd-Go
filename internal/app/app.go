@@ -74,7 +74,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	app.cleanup = append(app.cleanup, pubsub.Stop)
 
 	// Auth.
-	verifier := auth.NewVerifier(ctx, cfg)
+	verifier := auth.NewVerifier(cfg)
 	mockEnabled := cfg.OIDCMockEnabled && !cfg.IsProduction()
 	if mockEnabled {
 		// Loud on purpose: in this mode any request without credentials is an

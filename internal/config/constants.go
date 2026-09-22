@@ -73,6 +73,11 @@ const (
 	// every authenticated request indefinitely.
 	OIDCHTTPTimeout = 5 * time.Second
 
+	// OIDCJWKSRefreshMinInterval is the least time between two JWKS fetches
+	// triggered by tokens naming an unknown key id (key rotation still lands
+	// within this interval; invented kids cost the IdP nothing).
+	OIDCJWKSRefreshMinInterval = 30 * time.Second
+
 	// OIDCClockSkew is how far this server's clock may run ahead of the issuer's
 	// before valid tokens start being rejected. A token that expired less than
 	// this ago is still accepted; past it, it is not. Without the tolerance a

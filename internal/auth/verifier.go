@@ -19,14 +19,12 @@ type Verifier struct {
 	verifier *oidc.IDTokenVerifier
 }
 
-// NewVerifier builds a Verifier using a remote JWKS key set.
-func NewVerifier(ctx context.Context, cfg *config.Config) *Verifier {
-	// Bind a timeout-bounded HTTP client to the context so JWKS/issuer fetches
-	// (including lazy refreshes done by RemoteKeySet on later Verify calls) can
-	// never hang forever and stall every authenticated request.
+// NewVerifier builds a Verifier over the issuer's JWKS (see cachedKeySet).
+func NewVerifier(cfg *config.Config) *Verifier {
+	// A timeout-bounded client, so a JWKS fetch (including the lazy refreshes on
+	// later Verify calls) can never hang and stall every authenticated request.
 	httpClient := &http.Client{Timeout: config.OIDCHTTPTimeout}
-	ctx = oidc.ClientContext(ctx, httpClient)
-	keySet := oidc.NewRemoteKeySet(ctx, cfg.OIDCJWKSURI)
+	keySet := newCachedKeySet(cfg.OIDCJWKSURI, httpClient, config.OIDCJWKSRefreshMinInterval)
 	v := oidc.NewVerifier(cfg.OIDCIssuer, keySet, &oidc.Config{
 		ClientID:             cfg.OIDCAudience,
 		SupportedSigningAlgs: []string{oidc.RS256, oidc.ES384},

@@ -67,7 +67,7 @@ func newIssuer(t *testing.T) (*auth.Verifier, func(t *testing.T, claims map[stri
 		return raw
 	}
 
-	verifier := auth.NewVerifier(t.Context(), &config.Config{
+	verifier := auth.NewVerifier(&config.Config{
 		OIDCIssuer:   testIssuer,
 		OIDCAudience: testAudience,
 		OIDCJWKSURI:  srv.URL,
