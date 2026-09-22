@@ -186,7 +186,7 @@ are the one `TRUSTED_PROXY_HOPS` resolves; IPv6 ones are bucketed by /64.
 
 Profile events use **one** Redis subscription per process (`PSUBSCRIBE
 profile:updated:*`), fanned out in-process — a client cannot open Redis
-connections by subscribing. The decision record is `docs/adr/0004-…`.
+connections by subscribing. The decision record is [ADR-0004](../docs/adr/0004-websocket-is-budgeted-like-http.md).
 
 ## Changing a role
 
