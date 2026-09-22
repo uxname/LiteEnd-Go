@@ -82,9 +82,9 @@ type Config struct {
 	FileLinkTTLMinutes int `env:"FILE_LINK_TTL_MINUTES" envDefault:"60"`
 
 	// OIDC
-	OIDCIssuer      string `env:"OIDC_ISSUER,required"`
-	OIDCAudience    string `env:"OIDC_AUDIENCE,required"`
-	OIDCJWKSURI     string `env:"OIDC_JWKS_URI,required"`
+	OIDCIssuer      string `env:"OIDC_ISSUER,required,notEmpty"`
+	OIDCAudience    string `env:"OIDC_AUDIENCE,required,notEmpty"`
+	OIDCJWKSURI     string `env:"OIDC_JWKS_URI,required,notEmpty"`
 	OIDCMockEnabled bool   `env:"OIDC_MOCK_ENABLED" envDefault:"false"`
 
 	// Host ports of the companion dev UIs (used to render links on /dev).
@@ -239,6 +239,13 @@ func Load() (*Config, error) {
 	// allowlist there (fail-fast). In development an empty value is tolerated.
 	if cfg.IsProduction() && len(cfg.CORSOrigin) == 0 {
 		return nil, errors.New("CORS_ORIGIN must be set to an explicit origin allowlist in production")
+	}
+
+	// The dev pages ship in production behind Basic Auth; the admin/admin
+	// fallback that suits a laptop is no gate on a public host.
+	// (An empty variable falls back to the envDefault, so "" means "admin" here.)
+	if cfg.IsProduction() && cfg.AdminPassword == "admin" {
+		return nil, errors.New("ADMIN_PASSWORD must be set to a non-default value in production (ADMIN_USER too)")
 	}
 
 	return cfg, nil

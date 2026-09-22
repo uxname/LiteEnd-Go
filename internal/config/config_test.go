@@ -92,6 +92,54 @@ func TestLoad_MockAllowedOnlyInDevelopmentAndTest(t *testing.T) {
 	}
 }
 
+// The dev pages ship in production behind Basic Auth; a well-known password
+// there is no gate at all.
+func TestLoad_ProductionRefusesDefaultAdminCredentials(t *testing.T) {
+	cases := map[string]map[string]string{
+		"defaults":       {},
+		"admin password": {"ADMIN_USER": "ops", "ADMIN_PASSWORD": "admin"},
+		"empty password": {"ADMIN_USER": "ops", "ADMIN_PASSWORD": ""},
+	}
+	for name, vars := range cases {
+		t.Run(name, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("NODE_ENV", "production")
+			t.Setenv("CORS_ORIGIN", "http://localhost:3000")
+			for k, v := range vars {
+				t.Setenv(k, v)
+			}
+
+			_, err := Load()
+			require.ErrorContains(t, err, "ADMIN_")
+		})
+	}
+}
+
+func TestLoad_ProductionAcceptsRealAdminCredentials(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("NODE_ENV", "production")
+	t.Setenv("CORS_ORIGIN", "http://localhost:3000")
+	t.Setenv("ADMIN_USER", "ops")
+	t.Setenv("ADMIN_PASSWORD", "not-the-default")
+
+	_, err := Load()
+	require.NoError(t, err)
+}
+
+// An empty OIDC setting used to boot and then reject every token with a Warn
+// per request; it must stop the boot instead, like the S3 settings do.
+func TestLoad_RequiresNonEmptyOIDCVars(t *testing.T) {
+	for _, name := range []string{"OIDC_ISSUER", "OIDC_AUDIENCE", "OIDC_JWKS_URI"} {
+		t.Run(name, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv(name, "")
+
+			_, err := Load()
+			require.ErrorContains(t, err, name)
+		})
+	}
+}
+
 func TestLoad_TrimsCORSOriginList(t *testing.T) {
 	setRequiredEnv(t)
 	// The natural way to write a list — with spaces after the commas, plus a
