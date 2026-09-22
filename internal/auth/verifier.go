@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -38,9 +39,12 @@ func NewVerifier(ctx context.Context, cfg *config.Config) *Verifier {
 	return &Verifier{verifier: v}
 }
 
-// claims is the subset of token claims we consume.
+// claims is the subset of token claims we consume. Nonce and AtHash are read
+// for presence only: they appear in ID tokens, never in access tokens.
 type claims struct {
-	Sub string `json:"sub"`
+	Sub    string           `json:"sub"`
+	Nonce  *json.RawMessage `json:"nonce"`
+	AtHash *json.RawMessage `json:"at_hash"`
 }
 
 // Verify validates a raw bearer token and returns its subject (sub) and expiry.
@@ -53,6 +57,12 @@ func (v *Verifier) Verify(ctx context.Context, rawToken string) (sub string, exp
 	var c claims
 	if err := tok.Claims(&c); err != nil {
 		return "", time.Time{}, fmt.Errorf("parse claims: %w", err)
+	}
+	// An ID token is issuer-signed too, and carries our audience whenever
+	// OIDC_AUDIENCE is (wrongly) the SPA client id — but it proves a login to
+	// the client, it grants nothing to this API.
+	if c.Nonce != nil || c.AtHash != nil {
+		return "", time.Time{}, errors.New("token is an ID token (nonce/at_hash), not an access token")
 	}
 	if c.Sub == "" {
 		return "", time.Time{}, errors.New("token has no subject (sub)")

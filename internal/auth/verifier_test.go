@@ -110,11 +110,24 @@ func TestVerify_Rejects(t *testing.T) {
 	noSubject := claims(time.Now().Add(time.Hour))
 	delete(noSubject, "sub")
 
+	// An ID token is signed by the same issuer and, when OIDC_AUDIENCE is the
+	// SPA client id, carries the same aud — but it is proof of login for the
+	// client, not an access grant for this API. nonce and at_hash only ever
+	// appear in ID tokens; presence alone disqualifies, even when empty.
+	withClaim := func(k string, v any) map[string]any {
+		c := claims(time.Now().Add(time.Hour))
+		c[k] = v
+		return c
+	}
+
 	for name, c := range map[string]map[string]any{
-		"expired token":         expired,
-		"foreign issuer":        foreignIssuer,
-		"foreign audience":      foreignAudience,
-		"token without subject": noSubject,
+		"expired token":          expired,
+		"foreign issuer":         foreignIssuer,
+		"foreign audience":       foreignAudience,
+		"token without subject":  noSubject,
+		"id token (nonce)":       withClaim("nonce", "n-0S6_WzA2Mj"),
+		"id token (empty nonce)": withClaim("nonce", ""),
+		"id token (at_hash)":     withClaim("at_hash", "77QmUPtjPfzWtF2AnpK9RQ"),
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
