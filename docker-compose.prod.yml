@@ -39,8 +39,13 @@ services:
       - path: .env
         required: false
     environment:
-      # Prod artifact: production posture unless overridden upstream.
-      NODE_ENV: ${NODE_ENV:-production}
+      # Pinned, not interpolated: this file is the production artifact, and the
+      # .env beside it may well be a copy of .env.example (NODE_ENV=development,
+      # OIDC_MOCK_ENABLED=true) — which used to boot mock auth, i.e. anonymous
+      # callers as ADMIN, while looking like production. Literal values here beat
+      # both the env_file and interpolation.
+      NODE_ENV: production
+      OIDC_MOCK_ENABLED: "false"
       # Empty CORS_ORIGIN allows every origin OUTSIDE production (the silent
       # wrong-environment trap) — refuse to render without an explicit list.
       CORS_ORIGIN: ${CORS_ORIGIN:?set CORS_ORIGIN (comma-separated origins)}
@@ -55,6 +60,10 @@ services:
       OIDC_ISSUER: ${OIDC_ISSUER:?set OIDC_ISSUER}
       OIDC_AUDIENCE: ${OIDC_AUDIENCE:?set OIDC_AUDIENCE}
       OIDC_JWKS_URI: ${OIDC_JWKS_URI:?set OIDC_JWKS_URI}
+      # Basic Auth of the dev pages (/playground, /dev, /docs, /openapi.yaml),
+      # which ship in production. The app refuses to boot on the admin default.
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       # Uploaded files live in the object store, the only place every copy can
       # reach. S3_ENDPOINT is the storage address as the APP sees it (inside the
       # network); S3_PUBLIC_BASE_URL is the link prefix as the BROWSER sees it

@@ -13,6 +13,11 @@
   fake dev value. That token reads every S3 secret key — set a real one
   (`openssl rand -base64 32`) before that Garage is reachable from anything but loopback.
 
+The dev pages ship in production, so there `ADMIN_PASSWORD` is mandatory: the app
+refuses to boot on the `admin` default. They also have their own budget of
+`config.DevPagesRateLimit` (20) requests per minute per client address, charged
+before the password is checked.
+
 Credentials: `ADMIN_USER` / `ADMIN_PASSWORD` (Go side) and `ADMIN_PASSWORD_HASH`
 (bcrypt, for Caddy — escape `$` as `$$` for docker compose). Keep all three in sync.
 Unset, all three fall back to `admin`/`admin`; the hash's dev fallback lives in
@@ -97,11 +102,15 @@ pairs that must match the frontend.
 
 Four variables deserve special care:
 
-- **`NODE_ENV`** gates *all three* production hardenings in `config.Load`: it refuses
-  `OIDC_MOCK_ENABLED`, requires a non-empty `CORS_ORIGIN`, and disables GraphQL
-  introspection and internal error messages. The check is the exact string
-  `production` (`IsProduction()`), and the default is `development` — so forgetting it
-  ships a permissive deployment that looks fine.
+- **`NODE_ENV`** must be `development`, `test` or `production` — anything else
+  (`Production`, `staging`, …) stops the boot. `production` switches on every
+  hardening in `config.Load`: a non-empty `CORS_ORIGIN`, a non-default
+  `ADMIN_PASSWORD`, no GraphQL introspection or field suggestions, masked internal
+  errors, HSTS. `OIDC_MOCK_ENABLED=true` is refused unless `NODE_ENV` is
+  `development` or `test`, and a mock-mode boot logs `oidc_mock_enabled`.
+  `docker-compose.prod.yml` pins `NODE_ENV: production` and
+  `OIDC_MOCK_ENABLED: "false"`, so a `.env` copied from `.env.example` cannot turn
+  the production artifact into a mock-auth deployment. Run staging as production.
 - **`CORS_ORIGIN`** is a comma-separated allowlist that gates **both** HTTP CORS and
   the **WebSocket handshake** (`internal/graph/handler.go`). A value that is merely
   wrong for CORS also refuses subscriptions from that origin. Entries are
@@ -159,6 +168,25 @@ the host and path it was made for. The app refuses to boot otherwise, and any
 proxy in front of the bucket must pass `/<bucket>/*` through **unchanged** — a
 rewritten path or `Host` turns every link into `SignatureDoesNotMatch`. Why files
 are private at all: [ADR-0003](../docs/adr/0003-files-are-private-and-served-through-signed-links.md).
+
+## Limits on untrusted work
+
+Every budget is a Redis GCRA limiter (`redis.Limiter`) and fails open if Redis
+does — noisily, one `rate limiter unavailable` Warn per event. Client addresses
+are the one `TRUSTED_PROXY_HOPS` resolves; IPv6 ones are bucketed by /64.
+
+| What | Budget | Where |
+|---|---|---|
+| HTTP requests, and every GraphQL operation sent over a WebSocket | 100/min per address (`rl:auth:<ip>` for /graphql and /upload) | `middleware.RateLimit`, `graph` `AroundOperations` |
+| GraphQL query | 128 KiB, 5000 tokens, complexity 200 — the first two refused before parse or cache | `graph.NewHandler` |
+| WebSocket | authenticated `connection_init` within 10 s; ping every 25 s; 128 KiB frames; 10 live subscriptions; closes when its bearer token expires | `graph.NewHandler` |
+| `addTestJob` | 512 characters; 30/min per user | resolver |
+| Uploads | 100 files/hour per user | `upload.Handler` |
+| Dev pages | 20/min per address | `app.devGate` |
+
+Profile events use **one** Redis subscription per process (`PSUBSCRIBE
+profile:updated:*`), fanned out in-process — a client cannot open Redis
+connections by subscribing. The decision record is `docs/adr/0004-…`.
 
 ## Changing a role
 
@@ -237,7 +265,7 @@ docker compose -f docker-compose.prod.yml logs --tail=5 app | grep http_request
 The limiter answers from the other end too — its Redis key *is* the address it counted:
 
 ```bash
-# rate:rl:<ip>, or rate:rl:auth:<ip> for /graphql and /upload
+# rate:rl:<ip>, or rate:rl:auth:<ip> for /graphql and /upload (IPv6: rate:rl:<prefix>/64)
 redis-cli --scan --pattern 'rate:rl:*'
 ```
 
