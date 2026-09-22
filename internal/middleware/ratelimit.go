@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -32,7 +33,7 @@ func RateLimit(rdb *redis.Client) func(http.Handler) http.Handler {
 // PerIP charges every request to the client address's own budget under scope,
 // separate from the general one (e.g. a tighter limit on a password prompt).
 func PerIP(a Allower, scope string) func(http.Handler) http.Handler {
-	return throttle(a, func(r *http.Request) string { return "rl:" + scope + ":" + clientip.ClientIP(r) })
+	return throttle(a, func(r *http.Request) string { return "rl:" + scope + ":" + rateAddr(r) })
 }
 
 // throttle answers 429 once key(r)'s budget is spent.
@@ -56,10 +57,30 @@ func throttle(a Allower, key func(*http.Request) string) func(http.Handler) http
 // RateKey is the budget a request is charged to. The GraphQL handler reuses it
 // so operations sent over a WebSocket draw from the same budget as HTTP ones.
 func RateKey(r *http.Request) string {
-	ip := clientip.ClientIP(r)
+	ip := rateAddr(r)
 	p := r.URL.Path
 	if strings.HasPrefix(p, "/upload") || strings.HasPrefix(p, "/graphql") {
 		return "rl:auth:" + ip
 	}
 	return "rl:" + ip
+}
+
+// rateAddr is the client address a budget belongs to. IPv6 is bucketed by /64:
+// one subscriber is routinely handed a whole /64 and can rotate addresses in it
+// at will, so a per-address budget was no budget. IPv4 stays per address.
+func rateAddr(r *http.Request) string {
+	ip := clientip.ClientIP(r)
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	addr = addr.Unmap()
+	if addr.Is4() {
+		return addr.String()
+	}
+	prefix, err := addr.WithZone("").Prefix(64)
+	if err != nil {
+		return ip
+	}
+	return prefix.String()
 }

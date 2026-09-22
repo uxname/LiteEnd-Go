@@ -153,8 +153,9 @@ func TestC8_ForwardedEntryWithPortResolvesToItsAddress(t *testing.T) {
 		want  string
 	}{
 		"IPv4 with port": {chain: "1.2.3.4, 10.0.0.1:5678", want: "10.0.0.1"},
-		"IPv6 with port": {chain: "1.2.3.4, [2001:db8::1]:443", want: "2001:db8::1"},
-		"bare IPv6":      {chain: "1.2.3.4, ::1", want: "::1"},
+		// IPv6 clients are bucketed by /64 (see rateAddr).
+		"IPv6 with port": {chain: "1.2.3.4, [2001:db8::1]:443", want: "2001:db8::/64"},
+		"bare IPv6":      {chain: "1.2.3.4, ::1", want: "::/64"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -186,7 +187,7 @@ func TestC8_BracketedIPv6WithoutPortResolvesToItsAddress(t *testing.T) {
 	req.Header.Set("X-Forwarded-For", "1.2.3.4, [2001:db8::1]")
 	h.ServeHTTP(httptest.NewRecorder(), req)
 
-	require.Equal(t, "rl:auth:2001:db8::1", key, "the brackets must be stripped off the entry, not make it unparseable")
+	require.Equal(t, "rl:auth:2001:db8::/64", key, "the brackets must be stripped off the entry, not make it unparseable")
 }
 
 func TestRealIP_NoHeadersKeepsRemoteAddr(t *testing.T) {
@@ -245,6 +246,25 @@ func TestSecureHeaders_HSTSOnlyInProductionEvenBehindAProxy(t *testing.T) {
 			require.Empty(t, got)
 		}
 	}
+}
+
+// An IPv6 client is handed a whole /64 and can rotate addresses inside it
+// freely, so rate keys bucket IPv6 by /64; IPv4 stays per address.
+func TestRateKey_BucketsIPv6ByPrefix(t *testing.T) {
+	t.Parallel()
+	key := func(remote string) string {
+		r := httptest.NewRequest(http.MethodPost, "/graphql", nil)
+		r.RemoteAddr = remote
+		return RateKey(r)
+	}
+
+	same := []string{"[2001:db8::1]:1", "[2001:db8::2]:1", "[2001:db8::ffff:1]:1"}
+	for _, remote := range same {
+		require.Equal(t, "rl:auth:2001:db8::/64", key(remote), remote)
+	}
+	require.NotEqual(t, key("[2001:db8::1]:1"), key("[2001:db8:0:1::1]:1"), "another /64 is another client")
+	require.Equal(t, "rl:auth:203.0.113.9", key("203.0.113.9:1"))
+	require.Equal(t, "rl:auth:203.0.113.9", key("[::ffff:203.0.113.9]:1"), "v4-mapped is IPv4")
 }
 
 // budget allows the first n events and records the keys charged.
