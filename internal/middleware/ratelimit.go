@@ -47,16 +47,30 @@ func (l *Limiter) Allow(ctx context.Context, key string) (allowed bool, retryAft
 	return res.Allowed > 0, res.RetryAfter
 }
 
+// Allower spends one event of a named budget; *Limiter is the implementation.
+type Allower interface {
+	Allow(ctx context.Context, key string) (allowed bool, retryAfter time.Duration)
+}
+
 // RateLimit returns a Redis-backed (GCRA) rate-limiting middleware.
 // Mirrors @fastify/rate-limit: RateLimitMax requests per RateLimitWindow.
 // For /upload and /graphql the key is "auth:{ip}", otherwise the bare IP,
 // matching the TypeScript keyGenerator.
 func RateLimit(rdb *redis.Client) func(http.Handler) http.Handler {
-	limiter := NewLimiter(rdb, config.RateLimitMax, config.RateLimitWindow)
+	return throttle(NewLimiter(rdb, config.RateLimitMax, config.RateLimitWindow), RateKey)
+}
 
+// PerIP charges every request to the client address's own budget under scope,
+// separate from the general one (e.g. a tighter limit on a password prompt).
+func PerIP(a Allower, scope string) func(http.Handler) http.Handler {
+	return throttle(a, func(r *http.Request) string { return "rl:" + scope + ":" + clientip.ClientIP(r) })
+}
+
+// throttle answers 429 once key(r)'s budget is spent.
+func throttle(a Allower, key func(*http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			allowed, retry := limiter.Allow(r.Context(), RateKey(r))
+			allowed, retry := a.Allow(r.Context(), key(r))
 			if !allowed {
 				// RFC 9110: Retry-After is delay-seconds, not a Go duration string
 				// ("1m39s" is unparseable, so clients retry immediately).

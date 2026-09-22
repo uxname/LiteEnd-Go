@@ -49,6 +49,10 @@ const (
 	// WSPayloadReadLimit caps a single WebSocket frame, matching the query cap.
 	WSPayloadReadLimit = 128 << 10
 
+	// DevPagesRateLimit is each client address's per-minute budget on the Basic
+	// Auth dev pages (/dev, /playground, /docs, /openapi.yaml).
+	DevPagesRateLimit = 20
+
 	// TestJobMessageMaxLen bounds an addTestJob message (it becomes queue data).
 	TestJobMessageMaxLen = 512
 	// TestJobsPerMinute is each user's addTestJob budget.

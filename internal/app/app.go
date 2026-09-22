@@ -129,7 +129,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 		graphqlMW:  []func(http.Handler) http.Handler{translator.Middleware, authMW.Optional},
 		upload:     upload.NewHandler(uploadSvc),
 		uploadAuth: authMW.RequireAuth,
-		devAuth:    appmw.BasicAuth("liteend dev tools", cfg.AdminUser, cfg.AdminPassword),
+		devAuth:    devGate(appmw.NewLimiter(rdb.Raw(), config.DevPagesRateLimit, time.Minute), cfg),
 		devLinks:   devLinks(cfg),
 	})
 
@@ -153,6 +153,14 @@ type routeDeps struct {
 
 // mountRoutes registers every HTTP route. This is the single source of truth
 // for the app's route topology (Build and the route-sync test both use it).
+// devGate throttles the dev pages per IP before checking their Basic Auth, so
+// the password cannot be guessed at the general API rate.
+func devGate(l appmw.Allower, cfg *config.Config) func(http.Handler) http.Handler {
+	throttle := appmw.PerIP(l, "dev")
+	auth := appmw.BasicAuth("liteend dev tools", cfg.AdminUser, cfg.AdminPassword)
+	return func(next http.Handler) http.Handler { return throttle(auth(next)) }
+}
+
 func mountRoutes(r chi.Router, d routeDeps) {
 	// Public REST endpoints (documented in openapi.yaml).
 	//

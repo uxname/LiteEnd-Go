@@ -1,11 +1,13 @@
 package middleware
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -243,6 +245,42 @@ func TestSecureHeaders_HSTSOnlyInProductionEvenBehindAProxy(t *testing.T) {
 			require.Empty(t, got)
 		}
 	}
+}
+
+// budget allows the first n events and records the keys charged.
+type budget struct {
+	n    int
+	keys []string
+}
+
+func (b *budget) Allow(_ context.Context, key string) (bool, time.Duration) {
+	b.keys = append(b.keys, key)
+	return len(b.keys) <= b.n, 3 * time.Second
+}
+
+// The dev pages' Basic Auth was bounded only by the general per-IP budget, so
+// a password could be guessed at 100 tries a minute; they get their own,
+// smaller budget, charged before the credentials are even checked.
+func TestPerIP_ThrottlesWithItsOwnBudget(t *testing.T) {
+	t.Parallel()
+	b := &budget{n: 2}
+	h := PerIP(b, "dev")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	codes := make([]int, 0, 3)
+	var last *httptest.ResponseRecorder
+	for range 3 {
+		last = httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/dev", nil)
+		req.RemoteAddr = "192.0.2.1:5555"
+		h.ServeHTTP(last, req)
+		codes = append(codes, last.Code)
+	}
+
+	require.Equal(t, []int{http.StatusOK, http.StatusOK, http.StatusTooManyRequests}, codes)
+	require.Equal(t, "3", last.Header().Get("Retry-After"))
+	require.Equal(t, "rl:dev:192.0.2.1", b.keys[0])
 }
 
 // BasicAuth is the only guard on the dev pages, so every way of getting past it
