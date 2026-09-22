@@ -227,6 +227,24 @@ func TestSecureHeaders_SetsHardeningHeaders(t *testing.T) {
 	require.Equal(t, "default-src 'self'", rec.Header().Get("Content-Security-Policy"))
 }
 
+// The app listens on plain HTTP behind a TLS-terminating proxy, so it never
+// sees r.TLS: HSTS must still be sent in production, and never outside it.
+func TestSecureHeaders_HSTSOnlyInProductionEvenBehindAProxy(t *testing.T) {
+	t.Parallel()
+	for isProd, want := range map[bool]bool{true: true, false: false} {
+		h := SecureHeaders(isProd)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://api.example.test/graphql", nil))
+
+		got := rec.Header().Get("Strict-Transport-Security")
+		if want {
+			require.Equal(t, "max-age=31536000; includeSubDomains", got)
+		} else {
+			require.Empty(t, got)
+		}
+	}
+}
+
 // BasicAuth is the only guard on the dev pages, so every way of getting past it
 // is asserted: a wrong user must fail exactly like a wrong password (the
 // constant-time compare covers both), and a rejection must not leak through to

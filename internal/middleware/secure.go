@@ -14,9 +14,13 @@ func SecureHeaders(isProd bool) func(http.Handler) http.Handler {
 		BrowserXssFilter:      true,
 		FrameDeny:             true,
 		ContentSecurityPolicy: "default-src 'self'",
-		// HSTS only in production (behind TLS).
+		// HSTS only in production. The app sits behind a TLS-terminating proxy
+		// and never sees r.TLS, and unrolled/secure sends HSTS only on requests
+		// it believes are TLS — so it is forced rather than inferred from a
+		// forwarded header a client could forge.
 		STSSeconds:           stsSeconds(isProd),
 		STSIncludeSubdomains: isProd,
+		ForceSTSHeader:       isProd,
 		IsDevelopment:        !isProd,
 	})
 	return sec.Handler
