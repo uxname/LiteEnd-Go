@@ -119,8 +119,10 @@ const (
 	// FileUploadTimeout bounds a single upload request.
 	FileUploadTimeout = 30 * time.Second
 
-	// ProfileCacheTTL mirrors the 1h Redis cache for profiles.
-	ProfileCacheTTL = time.Hour
+	// ProfileCacheTTL is how long a profile — roles included — is served from
+	// Redis. It is also how long a role changed directly in the database keeps
+	// its old effect (see .agents/OPERATIONS.md, "Changing a role").
+	ProfileCacheTTL = 5 * time.Minute
 	// ProfileCacheKeyPrefix is the Redis key prefix for cached profiles.
 	ProfileCacheKeyPrefix = "profile:sub:"
 

@@ -160,6 +160,22 @@ proxy in front of the bucket must pass `/<bucket>/*` through **unchanged** — a
 rewritten path or `Host` turns every link into `SignatureDoesNotMatch`. Why files
 are private at all: [ADR-0003](../docs/adr/0003-files-are-private-and-served-through-signed-links.md).
 
+## Changing a role
+
+No API grants or revokes a role: `profiles.roles` is edited in the database. The
+auth path reads a profile — roles included — from its Redis copy
+(`profile:sub:<oidc_sub>`, `config.ProfileCacheTTL` = 5 minutes), so a revoked
+role keeps working until that copy expires. To make a change take effect at once,
+drop the copy in the same breath:
+
+```bash
+psql "$DATABASE_URL" -c "UPDATE profiles SET roles = '{USER}' WHERE oidc_sub = '<sub>';"
+redis-cli DEL 'profile:sub:<sub>'
+```
+
+A derived product that adds a role-management API must invalidate that key on
+every role write, as `profile.Service.Update` already does for profile edits.
+
 ## The proxy in front of the app
 
 Everything below follows from one fact: `X-Forwarded-For` is an ordinary header the
