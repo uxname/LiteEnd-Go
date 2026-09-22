@@ -90,7 +90,7 @@ func TestVerify_ValidToken(t *testing.T) {
 	t.Parallel()
 	verifier, sign := newIssuer(t)
 
-	sub, err := verifier.Verify(t.Context(), sign(t, claims(time.Now().Add(time.Hour))))
+	sub, _, err := verifier.Verify(t.Context(), sign(t, claims(time.Now().Add(time.Hour))))
 	require.NoError(t, err)
 	require.Equal(t, "user-1", sub)
 }
@@ -118,7 +118,7 @@ func TestVerify_Rejects(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			_, err := verifier.Verify(t.Context(), sign(t, c))
+			_, _, err := verifier.Verify(t.Context(), sign(t, c))
 			require.Error(t, err)
 		})
 	}
@@ -128,7 +128,7 @@ func TestVerify_UnsignedGarbageRejected(t *testing.T) {
 	t.Parallel()
 	verifier, _ := newIssuer(t)
 
-	_, err := verifier.Verify(t.Context(), "not-a-token")
+	_, _, err := verifier.Verify(t.Context(), "not-a-token")
 	require.Error(t, err)
 }
 
@@ -138,7 +138,7 @@ func TestVerify_ForeignSignatureRejected(t *testing.T) {
 	verifier, _ := newIssuer(t)
 	_, otherSign := newIssuer(t)
 
-	_, err := verifier.Verify(t.Context(), otherSign(t, claims(time.Now().Add(time.Hour))))
+	_, _, err := verifier.Verify(t.Context(), otherSign(t, claims(time.Now().Add(time.Hour))))
 	require.Error(t, err)
 }
 
@@ -150,11 +150,11 @@ func TestVerify_ClockSkewTolerance(t *testing.T) {
 	verifier, sign := newIssuer(t)
 
 	withinSkew := sign(t, claims(time.Now().Add(-config.OIDCClockSkew/2)))
-	sub, err := verifier.Verify(t.Context(), withinSkew)
+	sub, _, err := verifier.Verify(t.Context(), withinSkew)
 	require.NoError(t, err, "a token expired inside the skew tolerance is accepted")
 	require.Equal(t, "user-1", sub)
 
 	beyondSkew := sign(t, claims(time.Now().Add(-config.OIDCClockSkew-time.Minute)))
-	_, err = verifier.Verify(t.Context(), beyondSkew)
+	_, _, err = verifier.Verify(t.Context(), beyondSkew)
 	require.Error(t, err, "past the tolerance the same token is rejected")
 }

@@ -172,3 +172,77 @@ func TestWebsocket_OperationCompletesWithoutPanic(t *testing.T) {
 	require.Equal(t, []string{"next", "complete"}, frameTypes(frames))
 	require.NotContains(t, logs.String(), "graphql_panic")
 }
+
+// expiringAuth authenticates every socket as one USER whose token expires at exp.
+type expiringAuth struct{ exp time.Time }
+
+func (a expiringAuth) AuthenticateCreds(context.Context, string, string) (*sqlc.Profile, time.Time) {
+	return &sqlc.Profile{ID: 7, Roles: []sqlc.ProfileRole{sqlc.ProfileRoleUSER}}, a.exp
+}
+
+// wsCloseStatus waits for the server to close conn and returns the close code.
+func wsCloseStatus(t *testing.T, conn *coderws.Conn, within time.Duration) coderws.StatusCode {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		_, err := wsRead(t, conn, time.Until(deadline))
+		if err != nil {
+			return coderws.CloseStatus(err)
+		}
+	}
+	t.Fatalf("socket still open after %s", within)
+	return -1
+}
+
+// An anonymous socket is only ever a held resource (every WS operation needs a
+// user), so connection_init without valid credentials must close it with 4403.
+func TestWebsocket_AnonymousInitRejected(t *testing.T) {
+	t.Parallel()
+	url, _ := wsTestServer(t, NewHandler(&resolver.Resolver{}, auth.NewMiddleware(nil, nil, false), true, nil))
+	conn := wsDial(t, url, map[string]any{})
+
+	require.Equal(t, coderws.StatusCode(wsCloseUnauthorized), wsCloseStatus(t, conn, 5*time.Second))
+}
+
+// Net/http drops its deadlines on hijack, so a socket that never sends
+// connection_init must be closed by the transport's own timeout.
+func TestWebsocket_SilentSocketClosedAfterInitTimeout(t *testing.T) {
+	t.Parallel()
+	h := newHandler(&resolver.Resolver{}, expiringAuth{}, true, nil,
+		wsLimits{initTimeout: 200 * time.Millisecond, pingPong: time.Hour})
+	url, _ := wsTestServer(t, h)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, resp, err := coderws.Dial(ctx, url, &coderws.DialOptions{Subprotocols: []string{"graphql-transport-ws"}})
+	require.NoError(t, err)
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+	t.Cleanup(func() { _ = conn.CloseNow() })
+
+	require.Equal(t, coderws.StatusProtocolError, wsCloseStatus(t, conn, 3*time.Second))
+}
+
+// An initialised graphql-transport-ws socket that stops answering pings is
+// reaped instead of being held forever.
+func TestWebsocket_IdleSocketWithoutPongClosed(t *testing.T) {
+	t.Parallel()
+	h := newHandler(&resolver.Resolver{}, expiringAuth{}, true, nil,
+		wsLimits{initTimeout: time.Second, pingPong: 100 * time.Millisecond})
+	url, _ := wsTestServer(t, h)
+	conn := wsDial(t, url, map[string]any{})
+
+	_ = wsCloseStatus(t, conn, 3*time.Second) // never answers ping → must close
+}
+
+// A socket must not outlive the bearer token that authenticated it.
+func TestWebsocket_SocketClosedWhenTokenExpires(t *testing.T) {
+	t.Parallel()
+	h := newHandler(&resolver.Resolver{}, expiringAuth{exp: time.Now().Add(300 * time.Millisecond)}, true, nil,
+		wsLimits{initTimeout: time.Second, pingPong: time.Hour})
+	url, _ := wsTestServer(t, h)
+	conn := wsDial(t, url, map[string]any{})
+	wsAck(t, conn)
+
+	_ = wsCloseStatus(t, conn, 3*time.Second)
+}

@@ -29,8 +29,16 @@ const (
 	GraphQLQueryCacheSize = 1000
 	// GraphQLAPQCacheSize is the LRU size for automatic persisted queries.
 	GraphQLAPQCacheSize = 100
-	// WSKeepAlivePingInterval is the WebSocket transport keep-alive ping interval.
+	// WSKeepAlivePingInterval is the keep-alive interval of the legacy
+	// graphql-ws subprotocol (graphql-transport-ws uses WSPingPongInterval).
 	WSKeepAlivePingInterval = 10 * time.Second
+	// WSInitTimeout is how long a new WebSocket may take to send connection_init.
+	WSInitTimeout = 10 * time.Second
+	// WSPingPongInterval is how often the server pings a graphql-transport-ws
+	// socket; one that misses a pong for twice this long is closed.
+	WSPingPongInterval = 25 * time.Second
+	// WSPayloadReadLimit caps a single WebSocket frame, matching the query cap.
+	WSPayloadReadLimit = 128 << 10
 
 	// Profile field limits (enforced before persistence).
 	ProfileDisplayNameMaxLen = 100

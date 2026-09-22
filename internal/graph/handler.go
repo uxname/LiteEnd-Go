@@ -4,9 +4,11 @@ package graph
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"time"
 
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/handler/extension"
@@ -19,10 +21,32 @@ import (
 
 	"github.com/uxname/liteend-go/internal/auth"
 	"github.com/uxname/liteend-go/internal/config"
+	"github.com/uxname/liteend-go/internal/db/sqlc"
 	"github.com/uxname/liteend-go/internal/graph/generated"
 	"github.com/uxname/liteend-go/internal/graph/resolver"
 	"github.com/uxname/liteend-go/internal/logger"
 )
+
+// wsCloseUnauthorized closes a WebSocket whose connection_init carried no
+// valid credentials (4403 mirrors HTTP 403, as graphql-ws clients expect).
+const wsCloseUnauthorized = 4403
+
+var errUnauthorizedSocket = errors.New("unauthorized")
+
+// credsAuthenticator is the slice of auth.Middleware the WebSocket init needs.
+type credsAuthenticator interface {
+	AuthenticateCreds(ctx context.Context, bearer, mockSub string) (*sqlc.Profile, time.Time)
+}
+
+// wsLimits bounds a WebSocket's lifetime. NewHandler uses the config values;
+// tests shorten them.
+type wsLimits struct {
+	initTimeout time.Duration // connection_init must arrive within this
+	pingPong    time.Duration // idle sockets that stop answering pings are closed
+	tokenGrace  time.Duration // how long a socket may outlive its bearer token
+}
+
+type connCancelKey struct{}
 
 // NewHandler builds the GraphQL HTTP handler (queries, mutations, subscriptions).
 // isProd disables introspection and masks internal error messages in production.
@@ -34,6 +58,20 @@ func NewHandler(
 	mw *auth.Middleware,
 	isProd bool,
 	allowedOrigins []string,
+) http.Handler {
+	return newHandler(r, mw, isProd, allowedOrigins, wsLimits{
+		initTimeout: config.WSInitTimeout,
+		pingPong:    config.WSPingPongInterval,
+		tokenGrace:  config.OIDCClockSkew,
+	})
+}
+
+func newHandler(
+	r *resolver.Resolver,
+	mw credsAuthenticator,
+	isProd bool,
+	allowedOrigins []string,
+	limits wsLimits,
 ) http.Handler {
 	srv := handler.New(generated.NewExecutableSchema(generated.Config{Resolvers: r}))
 
@@ -55,16 +93,45 @@ func NewHandler(
 	// WebSocket transport. gqlgen negotiates both the modern
 	// "graphql-transport-ws" (graphql-ws lib) and legacy subprotocols, so the
 	// SPA's graphql-ws client connects without changes.
+	//
+	// A socket is a long-lived resource the HTTP timeouts no longer cover once
+	// the connection is hijacked, so it is bounded here instead: init must come
+	// within initTimeout, an idle graphql-transport-ws socket that stops
+	// answering pings is closed (KeepAlivePingInterval only serves the legacy
+	// protocol), and every frame is capped.
+	readLimit := int64(config.WSPayloadReadLimit)
 	srv.AddTransport(&transport.Websocket{
 		KeepAlivePingInterval: config.WSKeepAlivePingInterval,
+		InitTimeout:           limits.initTimeout,
+		PingPongInterval:      limits.pingPong,
+		PayloadReadLimit:      &readLimit,
 		Implementation:        transport.CoderWebsocketImplementation{AcceptOptions: accept},
 		InitFunc: func(ctx context.Context, initPayload transport.InitPayload) (context.Context, *transport.InitPayload, error) {
 			bearer := auth.StripBearer(initPayload.Authorization())
 			mockSub := initPayload.GetString("x-mock-sub")
-			if user := mw.AuthenticateCreds(ctx, bearer, mockSub); user != nil {
-				ctx = auth.WithUser(ctx, user)
+			user, expiresAt := mw.AuthenticateCreds(ctx, bearer, mockSub)
+			if user == nil {
+				// Every operation over a socket needs a user (the one subscription
+				// requires auth; anonymous queries have HTTP), so an anonymous
+				// socket is only ever a held resource. Refuse it at init.
+				ctx = transport.WithWebsocketCloseCode(ctx, wsCloseUnauthorized)
+				return transport.AppendCloseReason(ctx, "unauthorized"), nil, errUnauthorizedSocket
+			}
+			ctx = auth.WithUser(ctx, user)
+			if !expiresAt.IsZero() {
+				// The socket must not outlive the token that opened it: gqlgen
+				// closes the connection when this context ends.
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithDeadline(ctx, expiresAt.Add(limits.tokenGrace))
+				ctx = context.WithValue(ctx, connCancelKey{}, cancel)
+				ctx = transport.AppendCloseReason(ctx, "token expired")
 			}
 			return ctx, &initPayload, nil
+		},
+		CloseFunc: func(ctx context.Context, _ int) {
+			if cancel, ok := ctx.Value(connCancelKey{}).(context.CancelFunc); ok {
+				cancel()
+			}
 		},
 	})
 

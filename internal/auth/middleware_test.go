@@ -44,7 +44,7 @@ func newMockMiddleware(p Profiles) *Middleware {
 func TestAuthenticateCreds_MockDefaultUser(t *testing.T) {
 	t.Parallel()
 	m := newMockMiddleware(fakeProfiles{mockUser: sqlc.Profile{ID: 42, OidcSub: "mock-oidc-sub"}})
-	user := m.AuthenticateCreds(context.Background(), "", "")
+	user, _ := m.AuthenticateCreds(context.Background(), "", "")
 	require.NotNil(t, user)
 	require.Equal(t, int32(42), user.ID)
 }
@@ -55,7 +55,7 @@ func TestAuthenticateCreds_MockSubImpersonation(t *testing.T) {
 		mockUser: sqlc.Profile{ID: 42},
 		bySub:    map[string]sqlc.Profile{"alice": {ID: 7, OidcSub: "alice"}},
 	})
-	user := m.AuthenticateCreds(context.Background(), "", "alice")
+	user, _ := m.AuthenticateCreds(context.Background(), "", "alice")
 	require.NotNil(t, user)
 	require.Equal(t, int32(7), user.ID, "x-mock-sub should impersonate the matching profile")
 }
@@ -63,7 +63,8 @@ func TestAuthenticateCreds_MockSubImpersonation(t *testing.T) {
 func TestAuthenticateCreds_NoMockNoBearerIsNil(t *testing.T) {
 	t.Parallel()
 	m := NewMiddleware(nil, fakeProfiles{}, false)
-	require.Nil(t, m.AuthenticateCreds(context.Background(), "", ""))
+	user, _ := m.AuthenticateCreds(context.Background(), "", "")
+	require.Nil(t, user)
 }
 
 // failingMockProfiles makes the mock-identity lookup fail, which must degrade to
@@ -77,7 +78,8 @@ func (failingMockProfiles) FindOrCreateMockUser(context.Context) (sqlc.Profile, 
 func TestAuthenticateCreds_MockUserLookupFailureIsAnonymous(t *testing.T) {
 	t.Parallel()
 	m := newMockMiddleware(failingMockProfiles{})
-	require.Nil(t, m.AuthenticateCreds(context.Background(), "", ""))
+	user, _ := m.AuthenticateCreds(context.Background(), "", "")
+	require.Nil(t, user)
 }
 
 // --- RequireAuth (REST guard, e.g. POST /upload) ---

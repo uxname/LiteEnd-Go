@@ -43,18 +43,19 @@ type claims struct {
 	Sub string `json:"sub"`
 }
 
-// Verify validates a raw bearer token and returns the subject (sub).
-func (v *Verifier) Verify(ctx context.Context, rawToken string) (string, error) {
+// Verify validates a raw bearer token and returns its subject (sub) and expiry.
+// The expiry lets long-lived connections (WebSocket) end when the token does.
+func (v *Verifier) Verify(ctx context.Context, rawToken string) (sub string, expiry time.Time, err error) {
 	tok, err := v.verifier.Verify(ctx, rawToken)
 	if err != nil {
-		return "", fmt.Errorf("verify token: %w", err)
+		return "", time.Time{}, fmt.Errorf("verify token: %w", err)
 	}
 	var c claims
 	if err := tok.Claims(&c); err != nil {
-		return "", fmt.Errorf("parse claims: %w", err)
+		return "", time.Time{}, fmt.Errorf("parse claims: %w", err)
 	}
 	if c.Sub == "" {
-		return "", errors.New("token has no subject (sub)")
+		return "", time.Time{}, errors.New("token has no subject (sub)")
 	}
-	return c.Sub, nil
+	return c.Sub, tok.Expiry, nil
 }

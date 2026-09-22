@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/uxname/liteend-go/internal/db/sqlc"
 	"github.com/uxname/liteend-go/internal/httperr"
@@ -53,7 +54,7 @@ func (m *Middleware) Optional(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Optional never rejects (enforcement is left to resolver guards): a
 		// provider outage simply yields an anonymous request, already logged below.
-		if user, _ := m.resolve(r.Context(), bearerToken(r), r.Header.Get("x-mock-sub")); user != nil {
+		if user, _, _ := m.resolve(r.Context(), bearerToken(r), r.Header.Get("x-mock-sub")); user != nil {
 			r = r.WithContext(userContext(r.Context(), user))
 		}
 		next.ServeHTTP(w, r)
@@ -64,7 +65,7 @@ func (m *Middleware) Optional(next http.Handler) http.Handler {
 // e.g. POST /upload).
 func (m *Middleware) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, providerDown := m.resolve(r.Context(), bearerToken(r), r.Header.Get("x-mock-sub"))
+		user, _, providerDown := m.resolve(r.Context(), bearerToken(r), r.Header.Get("x-mock-sub"))
 		if providerDown {
 			// The token may well be valid — we just can't reach the OIDC provider
 			// to check it. 503 (not 401) tells the client to retry rather than
@@ -83,50 +84,51 @@ func (m *Middleware) RequireAuth(next http.Handler) http.Handler {
 // AuthenticateCreds resolves a user from raw credentials, returning nil when
 // authentication fails for any reason. Shared by the HTTP middleware (headers)
 // and the WebSocket init func (connection payload), so subscriptions
-// authenticate exactly like queries/mutations.
-func (m *Middleware) AuthenticateCreds(ctx context.Context, bearer, mockSub string) *sqlc.Profile {
-	user, _ := m.resolve(ctx, bearer, mockSub)
-	return user
+// authenticate exactly like queries/mutations. expiresAt is the bearer token's
+// expiry (zero for a mock identity), so a WebSocket can end with its token.
+func (m *Middleware) AuthenticateCreds(ctx context.Context, bearer, mockSub string) (user *sqlc.Profile, expiresAt time.Time) {
+	user, expiresAt, _ = m.resolve(ctx, bearer, mockSub)
+	return user, expiresAt
 }
 
 // resolve authenticates raw credentials and reports whether failure was due to
 // the OIDC provider being unreachable (vs. a missing/invalid token), so callers
 // can return 503 instead of a misleading 401.
-func (m *Middleware) resolve(ctx context.Context, bearer, mockSub string) (user *sqlc.Profile, providerDown bool) {
+func (m *Middleware) resolve(ctx context.Context, bearer, mockSub string) (user *sqlc.Profile, expiresAt time.Time, providerDown bool) {
 	if m.mockEnabled {
 		if mockSub != "" {
 			if p, err := m.profiles.FindBySub(ctx, mockSub); err == nil && p != nil {
-				return p, false
+				return p, time.Time{}, false
 			}
 		}
 		p, err := m.profiles.FindOrCreateMockUser(ctx)
 		if err != nil {
 			logger.From(ctx).Error("mock user resolution failed", "error", err)
-			return nil, false
+			return nil, time.Time{}, false
 		}
-		return &p, false
+		return &p, time.Time{}, false
 	}
 
 	if bearer == "" {
-		return nil, false
+		return nil, time.Time{}, false
 	}
-	sub, err := m.verifier.Verify(ctx, bearer)
+	sub, expiresAt, err := m.verifier.Verify(ctx, bearer)
 	if err != nil {
 		if isProviderUnavailable(err) {
 			logger.From(ctx).Warn("oidc provider unavailable during token verification", "error", err)
-			return nil, true
+			return nil, time.Time{}, true
 		}
 		// A failed verification is a security-relevant event; log at Warn so it is
 		// visible at production log levels (not just Debug).
 		logger.From(ctx).Warn("token verification failed", "error", err)
-		return nil, false
+		return nil, time.Time{}, false
 	}
 	p, err := m.profiles.FindOrCreateBySub(ctx, sub)
 	if err != nil {
 		logger.From(ctx).Error("find-or-create profile failed", "error", err)
-		return nil, false
+		return nil, time.Time{}, false
 	}
-	return &p, false
+	return &p, expiresAt, false
 }
 
 // isProviderUnavailable reports whether err indicates the OIDC provider could
