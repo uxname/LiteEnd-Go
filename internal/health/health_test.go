@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime/metrics"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -141,4 +143,29 @@ func TestPing_ContextCanceled(t *testing.T) {
 	res := ping(ctx, fakePinger{err: context.Canceled})
 	require.Equal(t, statusError, res.Status)
 	require.Equal(t, "canceled", res.Error)
+}
+
+// countingPinger counts pings.
+type countingPinger struct{ n atomic.Int32 }
+
+func (p *countingPinger) Ping(context.Context) error { p.n.Add(1); return nil }
+
+// /readyz is public and unauthenticated; each call used to ping Postgres and
+// Redis. The verdict is now reused for a second, so a flood of probes costs
+// the dependencies at most one ping per second each.
+func TestReady_ReusesTheVerdictBriefly(t *testing.T) {
+	t.Parallel()
+	db, rdb := &countingPinger{}, &countingPinger{}
+	c := New(db, rdb)
+	c.cacheFor = 50 * time.Millisecond
+
+	for range 5 {
+		c.Ready()(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	}
+	require.Equal(t, int32(1), db.n.Load())
+	require.Equal(t, int32(1), rdb.n.Load())
+
+	time.Sleep(60 * time.Millisecond)
+	c.Ready()(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	require.Equal(t, int32(2), db.n.Load(), "a stale verdict is re-checked")
 }

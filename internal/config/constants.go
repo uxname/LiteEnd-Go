@@ -17,6 +17,8 @@ const (
 	HeapThresholdMB = 150
 	// HealthCheckTimeout bounds the whole /readyz probe (all dependency pings).
 	HealthCheckTimeout = 5 * time.Second
+	// ReadinessCacheTTL is how long /readyz reuses its dependency verdict.
+	ReadinessCacheTTL = time.Second
 
 	// FallbackRequestID is used when no request id is present.
 	FallbackRequestID = "unknown"

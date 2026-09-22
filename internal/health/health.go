@@ -18,8 +18,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"runtime/metrics"
+	"sync"
+	"time"
 
 	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/logger"
@@ -49,11 +52,39 @@ type Checker struct {
 	// real — would also inflate the heap every parallel test in this package
 	// reads, so the seam is what keeps that assertion testable at all.
 	heap func() checkResult
+
+	// The dependency verdict is reused for cacheFor: /readyz is public and
+	// unauthenticated, and without this every call pinged Postgres and Redis.
+	cacheFor time.Duration
+	mu       sync.Mutex
+	cachedAt time.Time
+	cached   map[string]checkResult
 }
 
 // New builds a Checker over the given dependencies.
 func New(db, redis Pinger) *Checker {
-	return &Checker{db: db, redis: redis, heap: memoryCheck}
+	return &Checker{db: db, redis: redis, heap: memoryCheck, cacheFor: config.ReadinessCacheTTL}
+}
+
+// dependencies returns the dependency checks, pinging at most once per
+// cacheFor (callers in between wait for, then share, the fresh answer). A
+// verdict cut short by a caller hanging up is not kept.
+func (c *Checker) dependencies(ctx context.Context) map[string]checkResult {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cached != nil && time.Since(c.cachedAt) < c.cacheFor {
+		return c.cached
+	}
+	// The dependency checks — every entry here gates traffic. Sequential is
+	// fine: two fast probes, both bounded by the caller's context timeout.
+	checks := map[string]checkResult{
+		"database": ping(ctx, c.db),
+		"redis":    ping(ctx, c.redis),
+	}
+	if ctx.Err() == nil {
+		c.cached, c.cachedAt = checks, time.Now()
+	}
+	return checks
 }
 
 type checkResult struct {
@@ -96,12 +127,8 @@ func (c *Checker) Ready() http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), config.HealthCheckTimeout)
 		defer cancel()
 
-		// The dependency checks — every entry here gates traffic. Sequential is
-		// fine: two fast probes, both bounded by the context timeout above.
-		checks := map[string]checkResult{
-			"database": ping(ctx, c.db),
-			"redis":    ping(ctx, c.redis),
-		}
+		// A copy: the heap entry below must not be written into the cached map.
+		checks := maps.Clone(c.dependencies(ctx))
 
 		ok := true
 		for _, res := range checks {
