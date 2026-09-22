@@ -97,7 +97,7 @@ func (c *Client) Publish(ctx context.Context, channel, payload string) error {
 	return nil
 }
 
-// Subscribe returns a pub/sub subscription for the given channel.
-func (c *Client) Subscribe(ctx context.Context, channel string) *redis.PubSub {
-	return c.rdb.Subscribe(ctx, channel)
+// PSubscribe returns a pub/sub subscription for every channel matching pattern.
+func (c *Client) PSubscribe(ctx context.Context, pattern string) *redis.PubSub {
+	return c.rdb.PSubscribe(ctx, pattern)
 }

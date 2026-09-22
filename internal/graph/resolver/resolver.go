@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/vektah/gqlparser/v2/gqlerror"
+
 	"github.com/uxname/liteend-go/internal/db/sqlc"
 	"github.com/uxname/liteend-go/internal/profile"
 )
@@ -21,6 +23,37 @@ var startTime = time.Now() //nolint:gochecknoglobals // process start for uptime
 type ProfileService interface {
 	Update(ctx context.Context, id int32, sub string, in profile.UpdateParams) (sqlc.Profile, error)
 	Count(ctx context.Context) (int64, error)
+}
+
+type subscriptionBudgetKey struct{}
+
+// WithSubscriptionBudget caps how many subscriptions opened with ctx may be
+// live at once. The WebSocket transport sets it per connection: each live
+// subscription pins goroutines and a listener for as long as the socket lives.
+func WithSubscriptionBudget(ctx context.Context, n int) context.Context {
+	return context.WithValue(ctx, subscriptionBudgetKey{}, make(chan struct{}, n))
+}
+
+// acquireSubscription takes a slot of ctx's subscription budget (always
+// granted when ctx carries none). release gives the slot back.
+func acquireSubscription(ctx context.Context) (release func(), ok bool) {
+	slots, has := ctx.Value(subscriptionBudgetKey{}).(chan struct{})
+	if !has {
+		return func() {}, true
+	}
+	select {
+	case slots <- struct{}{}:
+		return func() { <-slots }, true
+	default:
+		return nil, false
+	}
+}
+
+func tooManySubscriptions() *gqlerror.Error {
+	return &gqlerror.Error{
+		Message:    "too many active subscriptions on this connection",
+		Extensions: map[string]any{"code": "TOO_MANY_SUBSCRIPTIONS", "statusCode": 429},
+	}
 }
 
 // ProfilePubSub publishes/subscribes profile-updated events.

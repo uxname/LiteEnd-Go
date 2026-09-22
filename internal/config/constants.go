@@ -44,6 +44,8 @@ const (
 	// WSPingPongInterval is how often the server pings a graphql-transport-ws
 	// socket; one that misses a pong for twice this long is closed.
 	WSPingPongInterval = 25 * time.Second
+	// WSMaxSubscriptionsPerConn caps the live subscriptions of one WebSocket.
+	WSMaxSubscriptionsPerConn = 10
 	// WSPayloadReadLimit caps a single WebSocket frame, matching the query cap.
 	WSPayloadReadLimit = 128 << 10
 

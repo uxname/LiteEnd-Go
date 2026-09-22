@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -20,43 +21,52 @@ func TestChannelFor_IsPerUser(t *testing.T) {
 	require.NotEqual(t, channelFor(7), channelFor(8))
 }
 
-func TestForward(t *testing.T) {
+// One Redis subscription per process fans events out in-process: an event on
+// a profile's channel reaches that owner's local subscribers and nobody else's.
+func TestDispatch_ReachesOnlyTheOwner(t *testing.T) {
 	t.Parallel()
-	// The payload is what Publish puts on the wire: a marshalled sqlc.Profile.
+	ps := NewPubSub(nil, slog.New(slog.DiscardHandler))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	own1 := ps.SubscribeForUser(ctx, 7)
+	own2 := ps.SubscribeForUser(ctx, 7)
+	other := ps.SubscribeForUser(ctx, 8)
 	event, err := json.Marshal(sqlc.Profile{ID: 7, OidcSub: "sub-7"})
 	require.NoError(t, err)
 
-	// Each subtest gets its own PubSub, so the parallel ones share no log buffer.
-	newPubSub := func() (*PubSub, *bytes.Buffer) {
-		var logs bytes.Buffer
-		return &PubSub{log: slog.New(slog.NewJSONHandler(&logs, nil))}, &logs
-	}
+	ps.dispatch(channelFor(7), string(event))
 
-	t.Run("delivers the decoded profile", func(t *testing.T) {
-		t.Parallel()
-		ps, _ := newPubSub()
-		out := make(chan sqlc.Profile, 1)
-		require.True(t, ps.forward(context.Background(), string(event), out))
-		got := <-out
-		require.Equal(t, int32(7), got.ID)
-		require.Equal(t, "sub-7", got.OidcSub)
-	})
+	require.Equal(t, int32(7), (<-own1).ID)
+	require.Equal(t, int32(7), (<-own2).ID)
+	require.Empty(t, other)
+}
 
-	t.Run("skips a bad payload and keeps the subscription alive", func(t *testing.T) {
-		t.Parallel()
-		ps, logs := newPubSub()
-		out := make(chan sqlc.Profile, 1)
-		require.True(t, ps.forward(context.Background(), `not json`, out))
-		require.Empty(t, out)
-		require.Contains(t, logs.String(), "bad profile event payload")
-	})
+func TestDispatch_IgnoresForeignChannelsAndBadPayloads(t *testing.T) {
+	t.Parallel()
+	var logs bytes.Buffer
+	ps := NewPubSub(nil, slog.New(slog.NewJSONHandler(&logs, nil)))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := ps.SubscribeForUser(ctx, 7)
 
-	t.Run("stops when the subscriber is gone", func(t *testing.T) {
-		t.Parallel()
-		ps, _ := newPubSub()
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		out := make(chan sqlc.Profile) // unbuffered and unread: only ctx can unblock
-		require.False(t, ps.forward(ctx, string(event), out))
-	})
+	ps.dispatch("profile:updated:not-a-number", `{}`)
+	ps.dispatch(channelFor(7), `not json`)
+
+	require.Empty(t, out)
+	require.Contains(t, logs.String(), "bad profile event payload")
+}
+
+// A subscriber that leaves is unregistered and its channel closed, so the
+// dispatcher neither leaks it nor blocks on it.
+func TestSubscribeForUser_UnregistersOnCancel(t *testing.T) {
+	t.Parallel()
+	ps := NewPubSub(nil, slog.New(slog.DiscardHandler))
+	ctx, cancel := context.WithCancel(context.Background())
+	out := ps.SubscribeForUser(ctx, 7)
+
+	cancel()
+	_, open := <-out
+
+	require.False(t, open)
+	require.Eventually(t, func() bool { return ps.listeners(7) == 0 }, time.Second, 5*time.Millisecond)
 }

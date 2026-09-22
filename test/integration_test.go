@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/coder/websocket/wsjson"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -454,6 +456,55 @@ func TestSubscription_ProfileUpdated(t *testing.T) {
 			t.Fatal("no subscription event after repeated profile updates")
 		}
 	}
+}
+
+// Subscriptions share one Redis subscription per process. Opening a Redis
+// subscription per GraphQL subscription handed every client a dedicated Redis
+// connection on demand, enough to exhaust the Redis everyone depends on.
+func TestSubscription_DoesNotOpenARedisConnectionPerSubscriber(t *testing.T) {
+	rdb := goredis.NewClient(&goredis.Options{Addr: net.JoinHostPort(os.Getenv("REDIS_HOST"), os.Getenv("REDIS_PORT"))})
+	defer func() { _ = rdb.Close() }()
+	// Pub/sub connections only: the pooled command connections grow with
+	// concurrency but are bounded by PoolSize, unlike subscriptions.
+	subscribers := func() int {
+		list, err := rdb.ClientList(context.Background()).Result()
+		require.NoError(t, err)
+		n := 0
+		for _, line := range strings.Split(strings.TrimSpace(list), "\n") {
+			if !strings.Contains(line, " sub=0 ") || !strings.Contains(line, " psub=0 ") {
+				n++
+			}
+		}
+		return n
+	}
+	before := subscribers()
+
+	wsURL := "ws" + server.URL[len("http"):] + "/graphql"
+	conn, _, err := coderws.Dial(context.Background(), wsURL,
+		&coderws.DialOptions{Subprotocols: []string{"graphql-transport-ws"}})
+	require.NoError(t, err)
+	defer func() { _ = conn.CloseNow() }()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	require.NoError(t, wsjson.Write(ctx, conn, map[string]any{"type": "connection_init", "payload": map[string]any{}}))
+	for {
+		var msg map[string]any
+		require.NoError(t, wsjson.Read(ctx, conn, &msg))
+		if msg["type"] == "connection_ack" {
+			break
+		}
+	}
+	const subscriptions = 10 // the per-connection cap
+	for i := range subscriptions {
+		require.NoError(t, wsjson.Write(ctx, conn, map[string]any{
+			"id": strconv.Itoa(i), "type": "subscribe",
+			"payload": map[string]any{"query": `subscription{ profileUpdated { id } }`},
+		}))
+	}
+	time.Sleep(500 * time.Millisecond) // let the server register every subscription
+
+	require.Equal(t, before, subscribers(),
+		"%d subscriptions must not open a Redis subscription each", subscriptions)
 }
 
 // --- helpers ---

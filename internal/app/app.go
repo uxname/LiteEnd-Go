@@ -67,6 +67,10 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	// Domain services.
 	profiles := profile.New(database.Queries, rdb)
 	pubsub := profile.NewPubSub(rdb, log)
+	pubsub.Start(ctx)
+	// Registered after Redis, so it runs first: the subscription closes before
+	// the client it lives on.
+	app.cleanup = append(app.cleanup, pubsub.Stop)
 
 	// Auth.
 	verifier := auth.NewVerifier(ctx, cfg)

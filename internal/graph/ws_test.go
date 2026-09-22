@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -18,9 +19,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/uxname/liteend-go/internal/auth"
+	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/db/sqlc"
 	"github.com/uxname/liteend-go/internal/graph/resolver"
 	"github.com/uxname/liteend-go/internal/logger"
+	"github.com/uxname/liteend-go/internal/profile"
 )
 
 // mockProfiles resolves every mock-auth caller to one dummy USER profile, so
@@ -302,4 +305,29 @@ func TestHTTP_OperationIsNotChargedTwice(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.NotContains(t, rec.Body.String(), "TOO_MANY_REQUESTS")
 	require.Empty(t, lim.charged())
+}
+
+// One socket may hold at most WSMaxSubscriptionsPerConn live subscriptions.
+func TestWebsocket_SubscriptionsCappedPerConnection(t *testing.T) {
+	t.Parallel()
+	res := &resolver.Resolver{PubSub: profile.NewPubSub(nil, slog.New(slog.DiscardHandler)), Log: slog.New(slog.DiscardHandler)}
+	url, _ := wsTestServer(t, mockHandler(res))
+	conn := wsDial(t, url, map[string]any{})
+	wsAck(t, conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	raw, err := json.Marshal(map[string]any{"query": "subscription { profileUpdated { id } }"})
+	require.NoError(t, err)
+
+	for i := range config.WSMaxSubscriptionsPerConn + 1 {
+		require.NoError(t, wsjson.Write(ctx, conn, wsFrame{ID: strconv.Itoa(i), Type: "subscribe", Payload: raw}))
+	}
+	for {
+		f, err := wsRead(t, conn, 5*time.Second)
+		require.NoError(t, err)
+		if f.Type == "error" || (f.Type == "next" && strings.Contains(string(f.Payload), "errors")) {
+			require.Contains(t, string(f.Payload), "TOO_MANY_SUBSCRIPTIONS")
+			return
+		}
+	}
 }

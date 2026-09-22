@@ -140,6 +140,7 @@ func newHandler(
 				return transport.AppendCloseReason(ctx, "unauthorized"), nil, errUnauthorizedSocket
 			}
 			ctx = context.WithValue(auth.WithUser(ctx, user), wsConnKey{}, true)
+			ctx = resolver.WithSubscriptionBudget(ctx, config.WSMaxSubscriptionsPerConn)
 			if !expiresAt.IsZero() {
 				// The socket must not outlive the token that opened it: gqlgen
 				// closes the connection when this context ends.

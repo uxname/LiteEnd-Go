@@ -582,3 +582,25 @@ func TestUpdateProfile_OwnershipLookupFailureIsFatal(t *testing.T) {
 	_, err := r.Mutation().UpdateProfile(userCtx(), model.ProfileUpdateInput{AvatarURL: &link})
 	require.Error(t, err)
 }
+
+// A connection may hold only a few live subscriptions: each one pins a
+// goroutine and a listener for as long as the socket lives.
+func TestProfileUpdated_RespectsTheConnectionBudget(t *testing.T) {
+	t.Parallel()
+	r := &resolver.Resolver{PubSub: &fakePubSub{ch: make(chan sqlc.Profile)}, Log: slog.New(slog.DiscardHandler)}
+	conn := resolver.WithSubscriptionBudget(userCtx(), 1)
+	first, cancelFirst := context.WithCancel(conn)
+
+	_, err := r.Subscription().ProfileUpdated(first)
+	require.NoError(t, err)
+	_, err = r.Subscription().ProfileUpdated(conn)
+	require.ErrorContains(t, err, "too many active subscriptions")
+
+	cancelFirst() // the first subscription ends and frees its slot
+	require.Eventually(t, func() bool {
+		sub, cancel := context.WithCancel(conn)
+		defer cancel()
+		_, err := r.Subscription().ProfileUpdated(sub)
+		return err == nil
+	}, time.Second, 5*time.Millisecond)
+}

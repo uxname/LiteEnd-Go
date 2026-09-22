@@ -142,18 +142,32 @@ func (r *subscriptionResolver) ProfileUpdated(ctx context.Context) (<-chan *mode
 		return nil, errors.New("service unavailable")
 	}
 
+	release, ok := acquireSubscription(ctx)
+	if !ok {
+		return nil, tooManySubscriptions()
+	}
+
 	src := r.PubSub.SubscribeForUser(ctx, user.ID)
 	out := make(chan *model.Profile, 1)
 	go func() {
+		defer release()
 		defer close(out)
 		defer func() {
 			if rec := recover(); rec != nil {
 				r.Log.Error("profileUpdated subscription bridge panicked", "panic", rec)
 			}
 		}()
-		for p := range src {
+		for {
 			select {
-			case out <- r.toModelProfile(ctx, p):
+			case p, open := <-src:
+				if !open {
+					return
+				}
+				select {
+				case out <- r.toModelProfile(ctx, p):
+				case <-ctx.Done():
+					return
+				}
 			case <-ctx.Done():
 				return
 			}
