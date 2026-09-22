@@ -114,12 +114,12 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 		Profiles: profiles,
 		PubSub:   pubsub,
 		Queue:    queueClient,
-		JobQuota: appmw.NewLimiter(rdb.Raw(), config.TestJobsPerMinute, time.Minute),
+		JobQuota: rdb.Limiter(config.TestJobsPerMinute, time.Minute),
 		I18n:     translator,
 		Files:    uploadSvc,
 		Log:      log,
 	}
-	gqlHandler := graph.NewHandler(res, authMW, appmw.NewLimiter(rdb.Raw(), config.RateLimitMax, config.RateLimitWindow),
+	gqlHandler := graph.NewHandler(res, authMW, rdb.Limiter(config.RateLimitMax, config.RateLimitWindow),
 		cfg.IsProduction(), cfg.CORSOrigin)
 
 	mountRoutes(srv.Router(), routeDeps{
@@ -127,9 +127,9 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 		ready:      health.New(database, rdb).Ready(),
 		graphql:    gqlHandler,
 		graphqlMW:  []func(http.Handler) http.Handler{translator.Middleware, authMW.Optional},
-		upload:     upload.NewHandler(uploadSvc),
+		upload:     upload.NewHandler(uploadSvc, rdb.Limiter(config.UploadFilesPerHour, time.Hour)),
 		uploadAuth: authMW.RequireAuth,
-		devAuth:    devGate(appmw.NewLimiter(rdb.Raw(), config.DevPagesRateLimit, time.Minute), cfg),
+		devAuth:    devGate(rdb.Limiter(config.DevPagesRateLimit, time.Minute), cfg),
 		devLinks:   devLinks(cfg),
 	})
 

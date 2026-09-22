@@ -39,15 +39,14 @@ var ErrFileTooLarge = errors.New("file too large")
 // detection (http.DetectContentType only looks at the first 512 bytes).
 const sniffLen = 512
 
-// maxExtLen caps the extension carried from the client-supplied filename into
-// the object key (".jpeg" is 5). Anything longer is dropped, not truncated.
-const maxExtLen = 10
-
-var allowedMimeTypes = map[string]struct{}{ //nolint:gochecknoglobals // static mime allowlist
-	"image/png":  {},
-	"image/jpeg": {},
-	"image/gif":  {},
-	"image/webp": {},
+// allowedMimeTypes is the upload allowlist, each type with the extension its
+// objects are stored under. The extension comes from here, from the sniffed
+// type — never from the client's filename.
+var allowedMimeTypes = map[string]string{ //nolint:gochecknoglobals // static mime allowlist
+	"image/png":  ".png",
+	"image/jpeg": ".jpg",
+	"image/gif":  ".gif",
+	"image/webp": ".webp",
 }
 
 // Writer is the subset of sqlc used to persist and read back upload metadata.
@@ -334,7 +333,7 @@ func (s *Service) ProcessFile(
 		return nil, ErrFileTooLarge
 	}
 
-	key := objectKey(time.Now().UTC(), originalFilename)
+	key := objectKey(time.Now().UTC(), detected)
 	link, err := s.LinkFor(ctx, key)
 	if err != nil {
 		return nil, err
@@ -352,32 +351,13 @@ func (s *Service) ProcessFile(
 	}, nil
 }
 
-// objectKey builds the key an upload is stored under: the date layout plus a
-// random name. The extension is the only part that comes from the client, and
-// object keys are paths — a separator or a ".." inside one would lift the object
-// out of its date prefix, so the extension is sanitised instead of copied.
-func objectKey(t time.Time, originalFilename string) string {
-	return path.Join(relativeDir(t), uuid.NewString()+safeExt(originalFilename))
-}
-
-// safeExt returns the extension of name when it is a short, purely alphanumeric
-// suffix, and "" otherwise. Everything a key must never carry — "/", "\", "..",
-// spaces, control or unicode characters — fails that test.
-func safeExt(name string) string {
-	ext := path.Ext(name)
-	if len(ext) < 2 || len(ext) > maxExtLen {
-		return ""
-	}
-	for _, r := range ext[1:] {
-		if !isASCIIAlnum(r) {
-			return ""
-		}
-	}
-	return ext
-}
-
-func isASCIIAlnum(r rune) bool {
-	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+// objectKey builds the key an upload is stored under: the date layout, a
+// random name and the extension of the sniffed type. Nothing the client sent
+// reaches the key: a filename suffix such as ".html" on an image used to be
+// kept, for any proxy or CDN that types files by extension to serve as active
+// content.
+func objectKey(t time.Time, mimetype string) string {
+	return path.Join(relativeDir(t), uuid.NewString()+allowedMimeTypes[mimetype])
 }
 
 // relativeDir is the date prefix every object key starts with: YYYY/MM/DD/HH-MM.
@@ -460,7 +440,17 @@ func (s *Service) putObject(ctx context.Context, f *SavedFile) error {
 	putCtx, cancel := context.WithTimeout(ctx, config.FileUploadTimeout)
 	defer cancel()
 
-	opts := minio.PutObjectOptions{ContentType: f.mimetype}
+	// Inline under its own (UUID) name; private objects must never sit in a
+	// shared cache, which would serve a once-signed object to unsigned requests.
+	cache := fmt.Sprintf("private, max-age=%d", int(s.linkTTL.Seconds()))
+	if s.public {
+		cache = "public, max-age=31536000, immutable" // keys are unique and never rewritten
+	}
+	opts := minio.PutObjectOptions{
+		ContentType:        f.mimetype,
+		ContentDisposition: `inline; filename="` + path.Base(f.key) + `"`,
+		CacheControl:       cache,
+	}
 	if _, err := s.store.PutObject(
 		putCtx, s.bucket, f.key, bytes.NewReader(f.data), int64(len(f.data)), opts,
 	); err != nil {

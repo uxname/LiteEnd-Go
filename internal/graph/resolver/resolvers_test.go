@@ -655,3 +655,33 @@ func TestProfileUpdated_RespectsTheConnectionBudget(t *testing.T) {
 		return err == nil
 	}, time.Second, 5*time.Millisecond)
 }
+
+// Signing is re-checked against ownership on read too, so the "only your own
+// files get signed" invariant does not rest on storedAvatar being the one
+// writer of avatar_url forever.
+func TestMe_ForeignStoredAvatarIsNotSigned(t *testing.T) {
+	t.Parallel()
+	foreign := storagePrefix + "/2026/01/02/03-04/someone-else.png"
+	links := fakeLinks{owned: map[string]int32{"2026/01/02/03-04/someone-else.png": testUserID + 1}}
+	r := &resolver.Resolver{Files: links, Log: discardLog()}
+	ctx := auth.WithUser(context.Background(), &sqlc.Profile{ID: testUserID, OidcSub: "user-sub", AvatarUrl: &foreign})
+
+	out, err := r.Query().Me(ctx)
+
+	require.NoError(t, err)
+	require.Nil(t, out.AvatarURL)
+}
+
+func TestMe_OwnStoredAvatarIsSigned(t *testing.T) {
+	t.Parallel()
+	own := storagePrefix + "/2026/01/02/03-04/mine.png"
+	links := fakeLinks{owned: map[string]int32{"2026/01/02/03-04/mine.png": testUserID}}
+	r := &resolver.Resolver{Files: links, Log: discardLog()}
+	ctx := auth.WithUser(context.Background(), &sqlc.Profile{ID: testUserID, OidcSub: "user-sub", AvatarUrl: &own})
+
+	out, err := r.Query().Me(ctx)
+
+	require.NoError(t, err)
+	require.NotNil(t, out.AvatarURL)
+	require.Contains(t, *out.AvatarURL, "X-Amz-Signature=")
+}

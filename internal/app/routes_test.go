@@ -40,7 +40,7 @@ func testRouteDeps() routeDeps {
 		ready:      noop,
 		graphql:    noop,
 		graphqlMW:  nil,
-		upload:     upload.NewHandler(nil), // svc unused during registration
+		upload:     upload.NewHandler(nil, nil), // svc unused during registration
 		uploadAuth: passthrough,
 		devAuth:    passthrough,
 		devLinks:   nil,

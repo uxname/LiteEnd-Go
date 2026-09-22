@@ -28,6 +28,7 @@ import (
 	"github.com/uxname/liteend-go/internal/graph/resolver"
 	"github.com/uxname/liteend-go/internal/logger"
 	"github.com/uxname/liteend-go/internal/middleware"
+	appredis "github.com/uxname/liteend-go/internal/redis"
 )
 
 // wsCloseUnauthorized closes a WebSocket whose connection_init carried no
@@ -70,7 +71,7 @@ type (
 func NewHandler(
 	r *resolver.Resolver,
 	mw *auth.Middleware,
-	limiter *middleware.Limiter,
+	limiter *appredis.Limiter,
 	isProd bool,
 	allowedOrigins []string,
 ) http.Handler {

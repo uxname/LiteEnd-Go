@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -88,6 +90,55 @@ func pngUpload(t *testing.T) (body *bytes.Buffer, contentType string) {
 	return &buf, mw.FormDataContentType()
 }
 
+// quotaOf allows the first n files and records the keys charged.
+type quotaOf struct {
+	n    int
+	keys []string
+}
+
+func (q *quotaOf) Allow(_ context.Context, key string) (bool, time.Duration) {
+	q.keys = append(q.keys, key)
+	return len(q.keys) <= q.n, time.Hour
+}
+
+// twoPNGUpload builds a two-file multipart body.
+func twoPNGUpload(t *testing.T) (body *bytes.Buffer, contentType string) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for _, name := range []string{"a.png", "b.png"} {
+		h := textproto.MIMEHeader{}
+		h.Set("Content-Disposition", `form-data; name="file"; filename="`+name+`"`)
+		h.Set("Content-Type", "image/png")
+		part, err := mw.CreatePart(h)
+		require.NoError(t, err)
+		_, err = part.Write([]byte(pngMagic + "data"))
+		require.NoError(t, err)
+	}
+	require.NoError(t, mw.Close())
+	return &buf, mw.FormDataContentType()
+}
+
+// Every signed-in user used to be able to fill the shared bucket at the rate
+// limiter's pace; each file now spends from a per-user quota, and a batch that
+// runs out stores nothing.
+func TestUpload_PerUserFileQuota(t *testing.T) {
+	t.Parallel()
+	svc, store := newSvc(t)
+	quota := &quotaOf{n: 1}
+	body, contentType := twoPNGUpload(t)
+	req := httptest.NewRequest(http.MethodPost, "/upload", body)
+	req.Header.Set("Content-Type", contentType)
+	req = req.WithContext(auth.WithUser(req.Context(), &sqlc.Profile{ID: testOwnerID}))
+	rec := httptest.NewRecorder()
+
+	NewHandler(svc, quota).upload(rec, req)
+
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	require.Empty(t, store.objects)
+	require.Equal(t, "rl:upload:"+strconv.Itoa(int(testOwnerID)), quota.keys[0])
+}
+
 // C8: uploader_ip is written from the address the proxy chain vouches for —
 // RemoteAddr as middleware.RealIP resolved it against TRUSTED_PROXY_HOPS — and
 // never from the raw X-Forwarded-For this handler can read. The handler used to
@@ -130,7 +181,7 @@ func TestC8_UploaderIPComesFromTheTrustedSourceNotTheHeader(t *testing.T) {
 			req = req.WithContext(auth.WithUser(req.Context(), &sqlc.Profile{ID: testOwnerID}))
 
 			rec := httptest.NewRecorder()
-			appmw.RealIP(c.hops)(http.HandlerFunc(NewHandler(svc).upload)).ServeHTTP(rec, req)
+			appmw.RealIP(c.hops)(http.HandlerFunc(NewHandler(svc, nil).upload)).ServeHTTP(rec, req)
 
 			require.Equal(t, http.StatusCreated, rec.Code, "the upload itself must succeed")
 			require.Len(t, store.objects, 1)

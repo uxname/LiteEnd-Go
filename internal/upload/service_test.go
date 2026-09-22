@@ -95,6 +95,8 @@ type storedObject struct {
 	bucket      string
 	data        []byte
 	contentType string
+	disposition string
+	cache       string
 }
 
 // fakeStore is an in-memory objectStore: unit tests must not need a live S3.
@@ -116,7 +118,10 @@ func (f *fakeStore) PutObject(
 	if err != nil {
 		return minio.UploadInfo{}, fmt.Errorf("fake store read: %w", err)
 	}
-	f.objects[key] = storedObject{bucket: bucket, data: data, contentType: opts.ContentType}
+	f.objects[key] = storedObject{
+		bucket: bucket, data: data, contentType: opts.ContentType,
+		disposition: opts.ContentDisposition, cache: opts.CacheControl,
+	}
 	return minio.UploadInfo{Key: key, Size: size}, nil
 }
 
@@ -264,59 +269,54 @@ func TestC5_UploadIsCommittedToObjectStorage(t *testing.T) {
 	require.NoDirExists(t, filepath.Join(t.TempDir(), "2020"), "nothing may land on local disk")
 }
 
-// C5: the extension is the only client-controlled part of the key, so whatever
-// the client calls its file, the key must come out as date prefix + UUID name +
-// at most a plain alphanumeric suffix — no separator, no parent segment, no
-// control or unicode character can ride along.
-func TestC5_ObjectKeyIsPathTraversalSafe(t *testing.T) {
+// C5: nothing of the client's filename reaches the key any more: it is the date
+// prefix, a UUID and the extension of the SNIFFED type. A client-chosen suffix
+// such as ".html" on an image used to survive into the key, where a proxy or
+// CDN that types files by extension could serve it as active content.
+func TestC5_ObjectKeyExtensionComesFromTheSniffedType(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2026, time.September, 5, 12, 30, 0, 0, time.UTC)
-	dir := "2026/09/05/12-30"
 	shape := regexp.MustCompile(
-		`^\d{4}/\d{2}/\d{2}/\d{2}-\d{2}/` +
-			`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[A-Za-z0-9]{1,9})?$`,
+		`^2026/09/05/12-30/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg|gif|webp)$`,
 	)
-
-	hostile := []string{
-		"../../../etc/passwd",
-		"..",
-		".",
-		"/etc/passwd",
-		"pic.png/../../../../etc/passwd",
-		"pic.pn/g",
-		`pic.\..\..\windows`,
-		"pic. png",
-		"pic.png\x00.txt",
-		"pic." + strings.Repeat("a", maxExtLen),
-		strings.Repeat("../", 50) + "etc/passwd",
-	}
-	for _, name := range hostile {
-		key := objectKey(at, name)
-		require.Regexp(t, shape, key, "key %q built from %q", key, name)
-		require.Equal(t, dir, path.Dir(key), "key %q must stay under the date prefix (from %q)", key, name)
-		require.NotContains(t, key, "..", "key %q must carry no parent-directory segment", key)
-		require.Equal(t, key, path.Clean(key), "key %q must already be clean", key)
+	for mimetype, ext := range map[string]string{
+		"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp",
+	} {
+		key := objectKey(at, mimetype)
+		require.Regexp(t, shape, key)
+		require.Equal(t, ext, path.Ext(key))
 	}
 }
 
-func TestC5_SafeExtKeepsOnlyShortAlphanumericSuffixes(t *testing.T) {
+func TestC5_HostileFilenameNeverShapesTheKey(t *testing.T) {
 	t.Parallel()
-	cases := map[string]string{
-		"pic.png":          ".png",
-		"pic.JPEG":         ".JPEG",
-		"archive.tar.gz":   ".gz",
-		"noext":            "",
-		"trailing.":        "",
-		"..":               "",
-		"pic.pn/g":         "",
-		`pic.pn\g`:         "",
-		"pic. png":         "",
-		"pic.png\x00":      "",
-		"pic.πng":          "",
-		"pic.superlongext": "",
+	s, _ := newSvc(t)
+	for _, name := range []string{"evil.html", "../../../etc/passwd", "pic.svg", "x.png\x00.html"} {
+		f, err := s.ProcessFile(context.Background(), name, "image/png", strings.NewReader(pngMagic+"data"))
+		require.NoError(t, err)
+		require.Equal(t, ".png", path.Ext(f.key), "key %q built from %q", f.key, name)
+		require.NotContains(t, f.key, "..")
 	}
-	for name, want := range cases {
-		require.Equal(t, want, safeExt(name), "safeExt(%q)", name)
+}
+
+// Stored objects say how they are to be shown and cached: inline under their
+// own (UUID) name, and — for private files — never in a shared cache, which
+// would serve a once-signed object to unsigned requests.
+func TestC5_StoredObjectCarriesDispositionAndCaching(t *testing.T) {
+	t.Parallel()
+	for public, wantCache := range map[bool]string{
+		false: "private, max-age=900",
+		true:  "public, max-age=31536000, immutable",
+	} {
+		s, store := newSvc(t)
+		s.public = public
+		f, err := s.ProcessFile(context.Background(), "evil.html", "image/png", strings.NewReader(pngMagic+"data"))
+		require.NoError(t, err)
+		require.NoError(t, s.SaveMetadata(context.Background(), []*SavedFile{f}, "10.0.0.1", testOwnerID))
+
+		obj := store.objects[f.key]
+		require.Equal(t, `inline; filename="`+path.Base(f.key)+`"`, obj.disposition)
+		require.Equal(t, wantCache, obj.cache)
 	}
 }
 

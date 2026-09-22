@@ -127,6 +127,8 @@ const (
 	// Upload limits (per @fastify/multipart config).
 	UploadMaxFileSize = 5 * 1024 * 1024
 	UploadMaxFiles    = 10
+	// UploadFilesPerHour is each user's budget of stored files.
+	UploadFilesPerHour = 100
 
 	// File visibility modes, the two values FILE_VISIBILITY takes.
 	// Private is the default: files are reachable only through a signed link.

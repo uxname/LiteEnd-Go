@@ -19,7 +19,7 @@ func (r *Resolver) toModelProfile(ctx context.Context, p sqlc.Profile) *model.Pr
 		UpdatedAt:   p.UpdatedAt.Time,
 		OidcSub:     p.OidcSub,
 		Roles:       p.Roles,
-		AvatarURL:   r.avatarLink(ctx, p.AvatarUrl),
+		AvatarURL:   r.avatarLink(ctx, p.ID, p.AvatarUrl),
 		DisplayName: p.DisplayName,
 		Bio:         p.Bio,
 	}
@@ -33,13 +33,22 @@ func (r *Resolver) toModelProfile(ctx context.Context, p sqlc.Profile) *model.Pr
 // OIDC `picture`, the mock avatar — is somebody else's URL and is passed
 // through untouched. A signing failure hides the avatar rather than failing the
 // whole profile read, and says so in the log.
-func (r *Resolver) avatarLink(ctx context.Context, stored *string) *string {
+//
+// Ownership is checked here too, not only in storedAvatar: that keeps "we sign
+// only your own files" true even if avatar_url ever gets a second writer (an
+// import, an admin edit, an IdP picture sync).
+func (r *Resolver) avatarLink(ctx context.Context, profileID int32, stored *string) *string {
 	if stored == nil || r.Files == nil {
 		return stored
 	}
 	key, ours := r.Files.KeyFromLink(*stored)
 	if !ours {
 		return stored
+	}
+	owned, err := r.Files.OwnedBy(ctx, key, profileID)
+	if err != nil || !owned {
+		r.Log.Warn("stored avatar is not the profile's own file; not signing it", "key", key, "error", err)
+		return nil
 	}
 	link, err := r.Files.LinkFor(ctx, key)
 	if err != nil {
