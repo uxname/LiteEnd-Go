@@ -76,6 +76,12 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	// Auth.
 	verifier := auth.NewVerifier(ctx, cfg)
 	mockEnabled := cfg.OIDCMockEnabled && !cfg.IsProduction()
+	if mockEnabled {
+		// Loud on purpose: in this mode any request without credentials is an
+		// ADMIN and x-mock-sub impersonates any profile.
+		log.Warn("oidc_mock_enabled: anonymous requests act as ADMIN; never expose this instance",
+			"node_env", cfg.Env)
+	}
 	authMW := auth.NewMiddleware(verifier, profiles, mockEnabled)
 
 	// Queue.

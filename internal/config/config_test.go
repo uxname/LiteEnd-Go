@@ -55,6 +55,43 @@ func TestLoad_MockInProductionRejected(t *testing.T) {
 	require.Contains(t, err.Error(), "OIDC_MOCK_ENABLED")
 }
 
+// NODE_ENV is an exact allowlist: a near-miss like "Production" used to boot
+// as a non-production app — mock auth allowed, introspection on, errors
+// unmasked — while looking like a production deploy.
+func TestLoad_NodeEnvMustBeKnown(t *testing.T) {
+	for _, v := range []string{"Production", "PRODUCTION", " production", "prod", "staging"} {
+		t.Run(v, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("NODE_ENV", v)
+			t.Setenv("CORS_ORIGIN", "http://localhost:3000")
+
+			_, err := Load()
+			require.ErrorContains(t, err, "NODE_ENV")
+		})
+	}
+}
+
+// Mock auth hands anonymous callers ADMIN, so it is allowed only where the
+// operator said "this is a development or test box" — never by omission.
+func TestLoad_MockAllowedOnlyInDevelopmentAndTest(t *testing.T) {
+	for env, allowed := range map[string]bool{"development": true, "test": true, "production": false} {
+		t.Run(env, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("NODE_ENV", env)
+			t.Setenv("OIDC_MOCK_ENABLED", "true")
+			t.Setenv("CORS_ORIGIN", "http://localhost:3000")
+			t.Setenv("ADMIN_PASSWORD", "not-the-default")
+
+			_, err := Load()
+			if allowed {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, "OIDC_MOCK_ENABLED")
+		})
+	}
+}
+
 func TestLoad_TrimsCORSOriginList(t *testing.T) {
 	setRequiredEnv(t)
 	// The natural way to write a list — with spaces after the commas, plus a

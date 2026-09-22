@@ -205,8 +205,18 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
-	if cfg.OIDCMockEnabled && cfg.IsProduction() {
-		return nil, errors.New("OIDC_MOCK_ENABLED must not be true in production")
+	// An exact allowlist, not "anything but production": a near-miss such as
+	// "Production" or "staging" used to boot with every production hardening
+	// off, while the deploy looked like production.
+	switch cfg.Env {
+	case "development", "test", "production":
+	default:
+		return nil, fmt.Errorf("NODE_ENV must be development, test or production, got %q", cfg.Env)
+	}
+	// Mock auth resolves anonymous callers to an ADMIN, so it needs an explicit
+	// development or test environment — never mere absence of "production".
+	if cfg.OIDCMockEnabled && cfg.Env != "development" && cfg.Env != "test" {
+		return nil, errors.New("OIDC_MOCK_ENABLED may only be true when NODE_ENV is development or test")
 	}
 
 	// `env` splits on "," without trimming, so the natural
