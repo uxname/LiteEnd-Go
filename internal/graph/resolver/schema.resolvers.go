@@ -156,9 +156,9 @@ func (r *subscriptionResolver) ProfileUpdated(ctx context.Context) (<-chan *mode
 		return nil, errors.New("service unavailable")
 	}
 
-	release, ok := acquireSubscription(ctx)
-	if !ok {
-		return nil, tooManySubscriptions()
+	release, err := acquireSubscription(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	src := r.PubSub.SubscribeForUser(ctx, user.ID)

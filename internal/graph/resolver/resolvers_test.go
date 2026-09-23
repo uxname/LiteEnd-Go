@@ -385,7 +385,7 @@ func TestProfileUpdated_BridgesEvents(t *testing.T) {
 	ch := make(chan sqlc.Profile, 1)
 	r := &resolver.Resolver{PubSub: &fakePubSub{ch: ch}, Log: discardLog()}
 
-	out, err := r.Subscription().ProfileUpdated(userCtx())
+	out, err := r.Subscription().ProfileUpdated(resolver.WithSubscriptionBudget(userCtx(), 1))
 	require.NoError(t, err)
 
 	ch <- sqlc.Profile{ID: 2, OidcSub: "user-sub", DisplayName: &name}
@@ -684,4 +684,17 @@ func TestMe_OwnStoredAvatarIsSigned(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out.AvatarURL)
 	require.Contains(t, *out.AvatarURL, "X-Amz-Signature=")
+}
+
+// A subscription only makes sense on a socket, which carries the budget; over
+// plain HTTP it would hold a request open outside any subscription limit.
+func TestProfileUpdated_RefusedOutsideAWebSocket(t *testing.T) {
+	t.Parallel()
+	r := &resolver.Resolver{PubSub: &fakePubSub{ch: make(chan sqlc.Profile)}, Log: discardLog()}
+
+	_, err := r.Subscription().ProfileUpdated(userCtx())
+
+	var gqlErr *gqlerror.Error
+	require.ErrorAs(t, err, &gqlErr)
+	require.Equal(t, "SUBSCRIPTIONS_REQUIRE_WEBSOCKET", gqlErr.Extensions["code"])
 }

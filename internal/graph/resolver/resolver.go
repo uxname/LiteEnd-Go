@@ -35,18 +35,22 @@ func WithSubscriptionBudget(ctx context.Context, n int) context.Context {
 	return context.WithValue(ctx, subscriptionBudgetKey{}, make(chan struct{}, n))
 }
 
-// acquireSubscription takes a slot of ctx's subscription budget (always
-// granted when ctx carries none). release gives the slot back.
-func acquireSubscription(ctx context.Context) (release func(), ok bool) {
+// acquireSubscription takes a slot of ctx's subscription budget. A context
+// without one did not come from a WebSocket: a subscription over plain HTTP
+// would hold the request open outside any subscription limit, so it is refused.
+// release gives the slot back.
+func acquireSubscription(ctx context.Context) (release func(), err error) {
 	slots, has := ctx.Value(subscriptionBudgetKey{}).(chan struct{})
 	if !has {
-		return func() {}, true
+		return nil, clientError("subscriptions are served over WebSocket only", "SUBSCRIPTIONS_REQUIRE_WEBSOCKET",
+			http.StatusBadRequest)
 	}
 	select {
 	case slots <- struct{}{}:
-		return func() { <-slots }, true
+		return func() { <-slots }, nil
 	default:
-		return nil, false
+		return nil, clientError("too many active subscriptions on this connection", "TOO_MANY_SUBSCRIPTIONS",
+			http.StatusTooManyRequests)
 	}
 }
 
@@ -58,11 +62,6 @@ func clientError(msg, code string, status int) *gqlerror.Error {
 
 func tooManyRequests() *gqlerror.Error {
 	return clientError("Too Many Requests", "TOO_MANY_REQUESTS", http.StatusTooManyRequests)
-}
-
-func tooManySubscriptions() *gqlerror.Error {
-	return clientError("too many active subscriptions on this connection", "TOO_MANY_SUBSCRIPTIONS",
-		http.StatusTooManyRequests)
 }
 
 // ProfilePubSub publishes/subscribes profile-updated events.
