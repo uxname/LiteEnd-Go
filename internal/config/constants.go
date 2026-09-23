@@ -33,6 +33,9 @@ const (
 	GraphQLQueryCacheSize = 1000
 	// GraphQLMaxQueryBytes caps a raw query before it is parsed or cached.
 	GraphQLMaxQueryBytes = 128 << 10
+	// GraphQLMaxFields caps the field selections of one query (fragments
+	// counted once): validation of repeated selections is quadratic.
+	GraphQLMaxFields = 500
 	// GraphQLParserTokenLimit caps the tokens the parser reads, bounding the
 	// super-linear validation cost of dense queries.
 	GraphQLParserTokenLimit = 5000

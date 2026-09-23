@@ -285,7 +285,6 @@ func TestWebsocket_OperationsDrawFromTheHTTPRateBudget(t *testing.T) {
 	require.Equal(t, []string{"next", "complete"}, frameTypes(wsRun(t, conn, "2", "{ __typename }")))
 	over := wsRun(t, conn, "3", "{ __typename }")
 
-	require.Equal(t, "next", over[0].Type)
 	require.Contains(t, string(over[0].Payload), `"TOO_MANY_REQUESTS"`)
 	require.Equal(t, []string{"rl:auth:127.0.0.1", "rl:auth:127.0.0.1", "rl:auth:127.0.0.1"}, lim.charged())
 }
@@ -330,4 +329,19 @@ func TestWebsocket_SubscriptionsCappedPerConnection(t *testing.T) {
 			return
 		}
 	}
+}
+
+// An operation is charged before any parse or validation work: one rejected
+// by the complexity limit (or a parse error) used to cost nothing.
+func TestWebsocket_RejectedOperationsAreCharged(t *testing.T) {
+	t.Parallel()
+	lim := &countingLimiter{budget: 100}
+	url, _ := wsTestServer(t, newHandler(&resolver.Resolver{}, expiringAuth{}, lim, true, nil, testLimits))
+	conn := wsDial(t, url, map[string]any{})
+	wsAck(t, conn)
+
+	_ = wsRun(t, conn, "1", "{ "+strings.Repeat("__typename ", 300)+"}") // over complexity
+	_ = wsRun(t, conn, "2", "{ not valid")                               // parse error
+
+	require.Len(t, lim.charged(), 2)
 }

@@ -20,6 +20,7 @@ import (
 	coderws "github.com/coder/websocket"
 	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vektah/gqlparser/v2/gqlerror"
+	"github.com/vektah/gqlparser/v2/parser"
 
 	"github.com/uxname/liteend-go/internal/auth"
 	"github.com/uxname/liteend-go/internal/config"
@@ -159,16 +160,19 @@ func newHandler(
 		},
 	})
 
+	// Charged first, before any parse or validation work: an operation that is
+	// then rejected (parse error, over a cap, over complexity) costs a unit too.
 	if limiter != nil {
-		srv.AroundOperations(chargeWebsocketOperations(limiter))
+		srv.Use(wsOperationCharge{limiter: limiter})
 	}
 
 	// Bound the cost of a query before gqlgen spends anything on it: parsing and
 	// validation run, and the validated document enters the query cache (keyed
 	// by its full text), before FixedComplexityLimit ever sees the operation.
-	// The byte cap also bounds what the caches can hold; the token cap bounds
-	// the super-linear validation of small but dense queries.
-	srv.Use(queryByteLimit(config.GraphQLMaxQueryBytes))
+	// The byte cap also bounds what the caches can hold; the field cap — on a
+	// cheap pre-parse — bounds validation, whose overlapping-fields rule is
+	// quadratic in repeated selections (5000 tokens of them took ~1.7 s).
+	srv.Use(queryShapeLimit{maxBytes: config.GraphQLMaxQueryBytes, maxFields: config.GraphQLMaxFields})
 	srv.SetParserTokenLimit(config.GraphQLParserTokenLimit)
 	// Suggestions ("Did you mean …") would enumerate the schema that disabled
 	// introspection hides.
@@ -204,44 +208,83 @@ func newHandler(
 	})
 }
 
-// queryByteLimit rejects a raw query longer than its value before it is parsed.
-// Registered before the APQ extension, so an oversized query never enters the
-// persisted-query cache either.
-type queryByteLimit int
+// queryShapeLimit rejects a raw query that is too long, or that selects too
+// many fields, before gqlgen parses, validates or caches it. Registered before
+// the APQ extension, so a rejected query never enters the persisted-query
+// cache either. The pre-parse costs about a millisecond at the token cap.
+type queryShapeLimit struct{ maxBytes, maxFields int }
 
-func (queryByteLimit) ExtensionName() string { return "QueryByteLimit" }
+func (queryShapeLimit) ExtensionName() string { return "QueryShapeLimit" }
 
-func (queryByteLimit) Validate(graphql.ExecutableSchema) error { return nil }
+func (queryShapeLimit) Validate(graphql.ExecutableSchema) error { return nil }
 
-func (l queryByteLimit) MutateOperationParameters(_ context.Context, p *graphql.RawParams) *gqlerror.Error {
-	if len(p.Query) <= int(l) {
-		return nil
+func (l queryShapeLimit) MutateOperationParameters(_ context.Context, p *graphql.RawParams) *gqlerror.Error {
+	if len(p.Query) > l.maxBytes {
+		return clientError(fmt.Sprintf("query exceeds %d bytes", l.maxBytes), "QUERY_TOO_LARGE",
+			http.StatusRequestEntityTooLarge)
 	}
-	return &gqlerror.Error{
-		Message:    fmt.Sprintf("query exceeds %d bytes", int(l)),
-		Extensions: map[string]any{"code": "QUERY_TOO_LARGE", "statusCode": http.StatusRequestEntityTooLarge},
+	doc, err := parser.ParseQueryWithTokenLimit(&ast.Source{Input: p.Query}, config.GraphQLParserTokenLimit)
+	if err != nil || doc == nil {
+		return nil //nolint:nilerr // not ours to report: gqlgen's own parse returns this error
 	}
+	if n := countFields(doc); n > l.maxFields {
+		return clientError(fmt.Sprintf("query selects %d fields, more than %d", n, l.maxFields), "QUERY_TOO_COMPLEX",
+			http.StatusBadRequest)
+	}
+	return nil
 }
 
-// chargeWebsocketOperations spends one event of the upgrade request's rate
-// budget per operation sent over a WebSocket. HTTP operations are skipped: the
-// RateLimit middleware already charged their request.
-func chargeWebsocketOperations(limiter opLimiter) graphql.OperationMiddleware {
-	return func(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
-		key, _ := ctx.Value(rateKeyKey{}).(string)
-		if isWS, _ := ctx.Value(wsConnKey{}).(bool); !isWS || key == "" {
-			return next(ctx)
+// countFields counts every field selection in the document, fragments
+// included (each counted once, as written).
+func countFields(doc *ast.QueryDocument) int {
+	var count func(ast.SelectionSet) int
+	count = func(set ast.SelectionSet) int {
+		n := 0
+		for _, sel := range set {
+			switch s := sel.(type) {
+			case *ast.Field:
+				n += 1 + count(s.SelectionSet)
+			case *ast.InlineFragment:
+				n += count(s.SelectionSet)
+			}
 		}
-		if allowed, _ := limiter.Allow(ctx, key); allowed {
-			return next(ctx)
-		}
-		// OneShot, not a bare response: a WebSocket keeps pulling the handler
-		// until it returns nil, so anything else would loop.
-		return graphql.OneShot(&graphql.Response{Errors: gqlerror.List{{
-			Message:    "Too Many Requests",
-			Extensions: map[string]any{"code": "TOO_MANY_REQUESTS", "statusCode": http.StatusTooManyRequests},
-		}}})
+		return n
 	}
+	n := 0
+	for _, op := range doc.Operations {
+		n += count(op.SelectionSet)
+	}
+	for _, f := range doc.Fragments {
+		n += count(f.SelectionSet)
+	}
+	return n
+}
+
+// wsOperationCharge spends one event of the upgrade request's rate budget per
+// operation sent over a WebSocket, before any parse or validation work. HTTP
+// operations are skipped: the RateLimit middleware already charged their
+// request.
+type wsOperationCharge struct{ limiter opLimiter }
+
+func (wsOperationCharge) ExtensionName() string { return "WebsocketOperationCharge" }
+
+func (wsOperationCharge) Validate(graphql.ExecutableSchema) error { return nil }
+
+func (c wsOperationCharge) MutateOperationParameters(ctx context.Context, _ *graphql.RawParams) *gqlerror.Error {
+	key, _ := ctx.Value(rateKeyKey{}).(string)
+	if isWS, _ := ctx.Value(wsConnKey{}).(bool); !isWS || key == "" {
+		return nil
+	}
+	if allowed, _ := c.limiter.Allow(ctx, key); allowed {
+		return nil
+	}
+	return clientError("Too Many Requests", "TOO_MANY_REQUESTS", http.StatusTooManyRequests)
+}
+
+// clientError is a GraphQL error with a client-facing code, which the error
+// presenter neither masks nor logs as internal.
+func clientError(msg, code string, status int) *gqlerror.Error {
+	return &gqlerror.Error{Message: msg, Extensions: map[string]any{"code": code, "statusCode": status}}
 }
 
 // recoverPanic turns a recovered resolver panic into a structured, correlated

@@ -196,3 +196,17 @@ func TestHandler_MultipartGraphQLRequestsNotAccepted(t *testing.T) {
 
 	require.NotContains(t, rec.Body.String(), `"__typename"`)
 }
+
+// Validation of repeated fields is quadratic (OverlappingFieldsCanBeMerged), so
+// a query under the byte and token caps could still cost seconds of CPU. The
+// field count is capped on a cheap pre-parse, before validation.
+func TestHandler_DenseQueryRejectedBeforeValidation(t *testing.T) {
+	t.Parallel()
+	query := "{ " + strings.Repeat("__typename ", 4990) + "}"
+
+	start := time.Now()
+	rec := postGraphQL(t, prodHandler(), query)
+
+	require.Contains(t, rec.Body.String(), `"QUERY_TOO_COMPLEX"`)
+	require.Less(t, time.Since(start), 100*time.Millisecond)
+}
