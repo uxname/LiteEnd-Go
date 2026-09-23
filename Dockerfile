@@ -21,6 +21,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 WORKDIR /app
 COPY --from=build /out/server /app/server
+# The image is the production artifact: an image run without NODE_ENV (a
+# Dokploy app, a bare `docker run`) gets production posture, not the code's
+# development default. The dev compose and the scale stand set it explicitly.
+ENV NODE_ENV=production
 EXPOSE 4000
 # Migrations run programmatically at startup (embedded), so no goose CLI needed.
 # The probe hits liveness (see cmd/server/main.go): a failed HEALTHCHECK makes an
