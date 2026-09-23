@@ -48,9 +48,11 @@ var (
 
 // Object storage credentials for the throwaway MinIO container. MinIO is the
 // S3-compatible server used here because it is S3-ready the moment it boots;
-// the code under test only speaks S3 through minio-go.
+// the code under test only speaks S3 through minio-go. Pulled from quay.io:
+// MinIO no longer serves its images from Docker Hub, so the Docker Hub name
+// only worked on machines that still had it cached.
 const (
-	s3Image    = "minio/minio:RELEASE.2025-09-07T16-13-09Z"
+	s3Image    = "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"
 	s3RootUser = "liteend-test-user"
 	s3RootPass = "liteend-test-pass"
 	s3Bucket   = "uploads"
