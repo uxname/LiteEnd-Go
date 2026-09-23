@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -344,7 +345,7 @@ func (s *Service) ProcessFile(
 		Path:             link,
 		key:              key,
 		data:             data,
-		originalFilename: originalFilename,
+		originalFilename: boundedFilename(originalFilename),
 		extension:        path.Ext(key),
 		size:             int64(len(data)),
 		mimetype:         detected,
@@ -358,6 +359,20 @@ func (s *Service) ProcessFile(
 // content.
 func objectKey(t time.Time, mimetype string) string {
 	return path.Join(relativeDir(t), uuid.NewString()+allowedMimeTypes[mimetype])
+}
+
+// boundedFilename cuts the client's filename — metadata only, it never reaches
+// the key — to config.UploadMaxFilenameBytes at a character boundary. Stored
+// whole, a multi-MiB name was read back on every ownership check.
+func boundedFilename(name string) string {
+	if len(name) <= config.UploadMaxFilenameBytes {
+		return name
+	}
+	cut := config.UploadMaxFilenameBytes
+	for cut > 0 && !utf8.RuneStart(name[cut]) {
+		cut--
+	}
+	return name[:cut]
 }
 
 // relativeDir is the date prefix every object key starts with: YYYY/MM/DD/HH-MM.

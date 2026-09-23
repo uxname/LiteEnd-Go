@@ -134,6 +134,8 @@ const (
 	// Upload limits (per @fastify/multipart config).
 	UploadMaxFileSize = 5 * 1024 * 1024
 	UploadMaxFiles    = 10
+	// UploadMaxFilenameBytes bounds the client filename kept as metadata.
+	UploadMaxFilenameBytes = 255
 	// UploadFilesPerHour is each user's budget of stored files.
 	UploadFilesPerHour = 100
 

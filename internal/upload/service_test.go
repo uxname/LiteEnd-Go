@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -601,4 +602,20 @@ func TestSaveMetadata_RecordsTheOwner(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, row.UploaderProfileID)
 	require.Equal(t, testOwnerID, *row.UploaderProfileID)
+}
+
+// The client's filename is kept only as metadata, but it used to be stored
+// whole: a 9 MiB name landed in the row and was read back on every avatar
+// check. It is cut to 255 bytes, at a character boundary.
+func TestC5_OriginalFilenameIsBounded(t *testing.T) {
+	t.Parallel()
+	s, _ := newSvc(t)
+	name := strings.Repeat("я", 5000) + ".png" // 2-byte runes
+
+	f, err := s.ProcessFile(context.Background(), name, "image/png", strings.NewReader(pngMagic+"data"))
+
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(f.originalFilename), 255)
+	require.True(t, utf8.ValidString(f.originalFilename))
+	require.True(t, strings.HasPrefix(name, f.originalFilename))
 }
