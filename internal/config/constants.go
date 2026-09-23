@@ -89,6 +89,12 @@ const (
 	// triggered by tokens naming an unknown key id (key rotation still lands
 	// within this interval; invented kids cost the IdP nothing).
 	OIDCJWKSRefreshMinInterval = 30 * time.Second
+	// OIDCJWKSRetryInterval spaces JWKS fetch attempts while none has
+	// succeeded yet (the IdP down at boot).
+	OIDCJWKSRetryInterval = time.Second
+	// OIDCJWKSMaxAge is how long a loaded JWKS is trusted before it is re-read,
+	// so a key the IdP removed stops verifying within this window.
+	OIDCJWKSMaxAge = 10 * time.Minute
 
 	// OIDCClockSkew is how far this server's clock may run ahead of the issuer's
 	// before valid tokens start being rejected. A token that expired less than

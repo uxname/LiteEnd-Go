@@ -132,3 +132,43 @@ func TestCachedKeySet_PicksUpRotatedKeyAfterInterval(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int32(2), srv.fetches.Load())
 }
+
+// With the IdP down from boot there are no keys yet, and every bearer used to
+// trigger its own fetch. Retries back off even before the first load.
+func TestCachedKeySet_BacksOffBeforeTheFirstLoad(t *testing.T) {
+	t.Parallel()
+	var fetches atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fetches.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	ks := testKeySet(srv.URL, time.Hour)
+	token := newSigningKey(t, "k").sign(t)
+
+	for range 20 {
+		_, err := ks.VerifySignature(t.Context(), token)
+		require.Error(t, err)
+	}
+
+	require.Equal(t, int32(1), fetches.Load())
+}
+
+// A key the IdP has removed (rotated out, or revoked after a leak) must stop
+// verifying, even while tokens keep naming its kid.
+func TestCachedKeySet_DropsARemovedKeyAfterMaxAge(t *testing.T) {
+	t.Parallel()
+	oldKey, newKey := newSigningKey(t, "old"), newSigningKey(t, "new")
+	srv := newJWKSServer(t)
+	srv.serve(t, oldKey)
+	ks := testKeySet(srv.url, time.Hour)
+	ks.maxAge, ks.retryEvery = 50*time.Millisecond, 10*time.Millisecond
+	_, err := ks.VerifySignature(t.Context(), oldKey.sign(t))
+	require.NoError(t, err)
+
+	srv.serve(t, newKey)
+	time.Sleep(60 * time.Millisecond)
+	_, err = ks.VerifySignature(t.Context(), oldKey.sign(t))
+
+	require.Error(t, err)
+}

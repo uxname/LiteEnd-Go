@@ -13,6 +13,8 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-jose/go-jose/v4"
+
+	"github.com/uxname/liteend-go/internal/config"
 )
 
 // maxJWKSBytes bounds a JWKS response; real ones are a few KiB.
@@ -30,16 +32,22 @@ const maxJWKSBytes = 1 << 20
 type cachedKeySet struct {
 	uri         string
 	client      *http.Client
-	minInterval time.Duration
+	minInterval time.Duration // between refetches triggered by a kid miss
+	retryEvery  time.Duration // between attempts while no JWKS has loaded yet
+	maxAge      time.Duration // a loaded JWKS is re-read after this, so removed keys stop verifying
 
 	mu        sync.Mutex
 	keys      *oidc.StaticKeySet
 	kids      map[string]bool
-	fetchedAt time.Time
+	fetchedAt time.Time // last attempt
+	loadedAt  time.Time // last success
 }
 
 func newCachedKeySet(uri string, client *http.Client, minInterval time.Duration) *cachedKeySet {
-	return &cachedKeySet{uri: uri, client: client, minInterval: minInterval}
+	return &cachedKeySet{
+		uri: uri, client: client, minInterval: minInterval,
+		retryEvery: config.OIDCJWKSRetryInterval, maxAge: config.OIDCJWKSMaxAge,
+	}
 }
 
 // VerifySignature implements oidc.KeySet.
@@ -47,16 +55,29 @@ func (s *cachedKeySet) VerifySignature(ctx context.Context, jwt string) ([]byte,
 	kid := keyID(jwt)
 
 	s.mu.Lock()
+	now := time.Now()
 	missing := s.keys == nil || kid == "" || !s.kids[kid]
-	if missing && (s.keys == nil || time.Since(s.fetchedAt) >= s.minInterval) {
-		s.fetchedAt = time.Now()
-		if err := s.refresh(ctx); err != nil && s.keys == nil {
-			s.mu.Unlock()
-			return nil, err
-		}
+	stale := s.keys != nil && now.Sub(s.loadedAt) >= s.maxAge
+	// Before the first load there is nothing to verify with, but the IdP may
+	// be down from boot: retry on a short timer instead of once per token.
+	wait := s.minInterval
+	if s.keys == nil {
+		wait = s.retryEvery
+	}
+	since := now.Sub(s.fetchedAt)
+	// A stale set is re-read once per maxAge anyway, so only a failing
+	// re-read is spaced out (by retryEvery), not held to minInterval.
+	if (missing && since >= wait) || (stale && since >= s.retryEvery) {
+		s.fetchedAt = now
+		// A failed refresh keeps the keys already loaded: an IdP outage must
+		// not log everyone out.
+		_ = s.refresh(ctx)
 	}
 	keys := s.keys
 	s.mu.Unlock()
+	if keys == nil {
+		return nil, errors.New("jwks not loaded yet")
+	}
 
 	payload, err := keys.VerifySignature(ctx, jwt)
 	if err != nil {
@@ -95,7 +116,7 @@ func (s *cachedKeySet) refresh(ctx context.Context) error {
 	if len(pub) == 0 {
 		return errors.New("jwks has no signing keys")
 	}
-	s.keys, s.kids = &oidc.StaticKeySet{PublicKeys: pub}, kids
+	s.keys, s.kids, s.loadedAt = &oidc.StaticKeySet{PublicKeys: pub}, kids, time.Now()
 	return nil
 }
 
