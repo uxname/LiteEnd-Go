@@ -60,7 +60,12 @@ type (
 	connCancelKey struct{}
 	rateKeyKey    struct{}
 	wsConnKey     struct{}
+	wsCredsKey    struct{}
 )
+
+// wsCreds are the credentials a socket authenticated with, kept so every
+// operation can re-resolve the user instead of trusting the init-time copy.
+type wsCreds struct{ bearer, mockSub string }
 
 // NewHandler builds the GraphQL HTTP handler (queries, mutations, subscriptions).
 // isProd disables introspection and masks internal error messages in production.
@@ -142,6 +147,7 @@ func newHandler(
 				return transport.AppendCloseReason(ctx, "unauthorized"), nil, errUnauthorizedSocket
 			}
 			ctx = context.WithValue(auth.WithUser(ctx, user), wsConnKey{}, true)
+			ctx = context.WithValue(ctx, wsCredsKey{}, wsCreds{bearer: bearer, mockSub: mockSub})
 			ctx = resolver.WithSubscriptionBudget(ctx, config.WSMaxSubscriptionsPerConn)
 			if !expiresAt.IsZero() {
 				// The socket must not outlive the token that opened it: gqlgen
@@ -159,6 +165,11 @@ func newHandler(
 			}
 		},
 	})
+
+	// A socket lives for up to its token's lifetime, and roles change in the
+	// database meanwhile: each operation re-resolves the user (through the
+	// profile cache) rather than running on the connection_init snapshot.
+	srv.AroundOperations(refreshWebsocketUser(mw))
 
 	// Charged first, before any parse or validation work: an operation that is
 	// then rejected (parse error, over a cap, over complexity) costs a unit too.
@@ -279,6 +290,27 @@ func (c wsOperationCharge) MutateOperationParameters(ctx context.Context, _ *gra
 		return nil
 	}
 	return clientError("Too Many Requests", "TOO_MANY_REQUESTS", http.StatusTooManyRequests)
+}
+
+// refreshWebsocketUser replaces the user of a WebSocket operation with the one
+// its connection's credentials resolve to now. HTTP operations already got a
+// fresh user from the auth middleware on their own request.
+func refreshWebsocketUser(mw credsAuthenticator) graphql.OperationMiddleware {
+	return func(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
+		creds, isWS := ctx.Value(wsCredsKey{}).(wsCreds)
+		if !isWS {
+			return next(ctx)
+		}
+		user, _ := mw.AuthenticateCreds(ctx, creds.bearer, creds.mockSub)
+		if user == nil {
+			// OneShot, not a bare response: a WebSocket keeps pulling the
+			// handler until it returns nil, so anything else would loop.
+			return graphql.OneShot(&graphql.Response{Errors: gqlerror.List{
+				clientError("unauthenticated", "UNAUTHENTICATED", http.StatusUnauthorized),
+			}})
+		}
+		return next(auth.WithUser(ctx, user))
+	}
 }
 
 // clientError is a GraphQL error with a client-facing code, which the error

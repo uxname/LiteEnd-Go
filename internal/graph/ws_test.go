@@ -345,3 +345,40 @@ func TestWebsocket_RejectedOperationsAreCharged(t *testing.T) {
 
 	require.Len(t, lim.charged(), 2)
 }
+
+// mutableAuth resolves every socket to profile 7 with whatever roles are
+// current, like the real profile lookup after a role change.
+type mutableAuth struct {
+	mu    sync.Mutex
+	roles []sqlc.ProfileRole
+}
+
+func (a *mutableAuth) AuthenticateCreds(context.Context, string, string) (*sqlc.Profile, time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return &sqlc.Profile{ID: 7, Roles: append([]sqlc.ProfileRole(nil), a.roles...)}, time.Time{}
+}
+
+func (a *mutableAuth) set(roles ...sqlc.ProfileRole) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.roles = roles
+}
+
+// A role revoked while a socket is open must stop working on that socket too:
+// the profile used to be resolved once, at connection_init, for the socket's
+// whole life.
+func TestWebsocket_RevokedRoleStopsWorkingOnAnOpenSocket(t *testing.T) {
+	t.Parallel()
+	a := &mutableAuth{roles: []sqlc.ProfileRole{sqlc.ProfileRoleUSER, sqlc.ProfileRoleADMIN}}
+	url, _ := wsTestServer(t, newHandler(&resolver.Resolver{}, a, nil, true, nil, testLimits))
+	conn := wsDial(t, url, map[string]any{})
+	wsAck(t, conn)
+
+	before := wsRun(t, conn, "1", `{ echo(text: "hi") }`)
+	a.set(sqlc.ProfileRoleUSER)
+	after := wsRun(t, conn, "2", `{ echo(text: "hi") }`)
+
+	require.Contains(t, string(before[0].Payload), `"echo":"hi"`)
+	require.Contains(t, string(after[0].Payload), `"FORBIDDEN"`)
+}
