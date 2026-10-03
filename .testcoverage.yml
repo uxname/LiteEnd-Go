@@ -3,8 +3,7 @@
 # coverage drops under the thresholds.
 #
 # `threshold.total` is calibrated from a real `task test:cov` run (unit +
-# integration with -coverpkg, 81.5% at calibration) and set a few points below
-# with headroom. Ratchet it UP over time — never lower it to dodge a finding;
+# integration with -coverpkg) and set a couple of points below with headroom. Ratchet it UP over time — never lower it to dodge a finding;
 # add the missing test instead.
 #
 # Per-package `override` floors below are the backend's TDD teeth: new
@@ -28,30 +27,51 @@ exclude:
     - ^cmd/
 
 threshold:
-  total: 78
+  total: 86
 
-# Floors below are calibrated a few points under the real numbers from the same
-# run: resolver 96.3, queue 88.8, upload 82.2, middleware 85.4, auth 72.6,
-# profile 66.7.
+# Floors sit 1-3 points under the real numbers of the calibration run (total
+# 88.0%, 2026-10-03): the run is shuffled and raced, so a package can move a
+# point between runs, and a floor at the exact number would flake. Every package
+# with logic of its own has a floor — without one, a package's tests can be
+# thinned out and the total barely notices. Raise a floor whenever its package's
+# coverage rises; a new package arrives with its floor in the same change.
 override:
   - path: ^internal/graph/resolver$
-    threshold: 94
-  - path: ^internal/queue$
-    threshold: 85
-  - path: ^internal/upload$
-    threshold: 80
-  # The package that decides which address to believe: whether a caller can pick
-  # its own rate-limit key is settled here. It had no floor at all, so its tests
-  # could have been thinned out without the gate noticing.
+    threshold: 97
+  - path: ^internal/graph$
+    threshold: 95
   - path: ^internal/middleware$
-    threshold: 83
-  - path: ^internal/profile$
-    threshold: 64
-  # Was 70 while Verify — the real token check — had no test at all. With
-  # verifier_test.go the package measures 82.4; the floor sits under that.
+    threshold: 95
+  - path: ^internal/config$
+    threshold: 96
+  - path: ^internal/i18n$
+    threshold: 94
+  - path: ^internal/health$
+    threshold: 93
+  - path: ^internal/app$
+    threshold: 87
+  - path: ^internal/queue$
+    threshold: 87
   - path: ^internal/auth$
-    threshold: 80
-  # Redaction is the reason a password never reaches a log file. Its package had
-  # no test at all until the floor below made removing them fail the gate.
+    threshold: 84
+  - path: ^internal/upload$
+    threshold: 83
+  - path: ^internal/devtools$
+    threshold: 83
+  - path: ^internal/db$
+    threshold: 75
+  - path: ^internal/profile$
+    threshold: 75
+  - path: ^internal/httperr$
+    threshold: 70
+  - path: ^internal/server$
+    threshold: 60
+  - path: ^internal/redis$
+    threshold: 57
+  # Redaction is the reason a password never reaches a log file; the address
+  # check in clientip decides which caller a rate limit applies to. Both are
+  # fully covered and must stay that way.
   - path: ^internal/logger$
-    threshold: 90
+    threshold: 100
+  - path: ^internal/clientip$
+    threshold: 100
