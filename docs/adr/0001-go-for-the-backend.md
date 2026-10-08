@@ -44,4 +44,4 @@ The backend is written in Go — compiled and strictly typed, on a small idiomat
 - The price: more verbosity than TypeScript, two languages in one product (so a
   frontend-only contributor cannot follow the backend without learning Go), and a
   generated-code layer (sqlc, gqlgen) that must be regenerated rather than edited — see
-  `AGENTS.md`, golden rule 2.
+  `AGENTS.md`, guardrail "Edit the source, then run `task gen`".
