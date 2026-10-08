@@ -5,9 +5,9 @@ as the frontend's trio rule.
 
 ## The discipline
 
-New business logic — a resolver, service, job or middleware — is written
-**test-first**: add the unit test that encodes the behaviour (success path + key
-failure modes), watch it fail, then implement to green.
+New business logic is written **test-first**
+([CODING_STANDARDS.md](./CODING_STANDARDS.md#tests-and-coverage-floors)): watch the
+test fail, then implement to green.
 
 `task test:cov` enforces **per-package coverage floors** from the `override` block in
 `.testcoverage.yml`, plus a total floor. New logic added to a domain package without
@@ -21,8 +21,7 @@ number quoted in prose (including here).** Two things about it:
   prefix). Get it wrong and the entry silently does nothing — this doc used to claim
   `exclude.paths` took a full import path, and the result was that generated gqlgen and
   sqlc code was never actually excluded, dragging the reported total down by ~30 points.
-- Ratchet floors **up** as coverage grows. **Never lower one to dodge a finding** —
-  add the missing test. If a floor blocks you, that is the gate working.
+- How floors move (only up, in the same change): [CODING_STANDARDS.md](./CODING_STANDARDS.md#tests-and-coverage-floors).
 
 ## What new code must cover
 
@@ -47,9 +46,6 @@ explicitly.
 `task test:cov` runs every test with cross-package coverage and enforces
 `.testcoverage.yml`. It runs on **pre-push**. `task test:all` is the same tests
 without the coverage gate.
-
-There is **no CI** — this gate lives entirely in the git hook, so `--no-verify`
-bypasses it locally. Don't.
 
 ## The real token check
 

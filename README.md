@@ -143,7 +143,7 @@ almost every change.
 4. **Try it.** `task start:dev`, then in the playground run `query { version }`.
 
 5. **Check before committing.** `task check` runs the same gate the
-   `pre-commit` hook does (codegen freshness, format, lint, vuln, secrets).
+   `pre-commit` hook does (codegen freshness, tidy, lint, arch, deadcode, secrets).
 
 The same loop applies to the database: edit a query in `db/queries/*.sql`, run
 `task gen`, then call the generated `database.Queries.<Name>` from a service.

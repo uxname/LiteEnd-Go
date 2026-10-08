@@ -52,18 +52,7 @@ at **zero issues**.
 - **Formatting** is `gofumpt` + `gci` import ordering (stdlib → third-party →
   `github.com/uxname/liteend-go`). `task fmt` applies both; `task lint` verifies them as part of the lint run.
 
-## Definition of done — read before claiming a change is finished
+## Definition of done
 
-A change is done only when ALL of these hold. Do not report success otherwise:
-
-1. **`task check` passes** (the full gate above).
-2. **`task test:cov` passes** (unit + integration + coverage floors; needs Docker).
-   If Docker is unavailable, run `task test` and **say** that integration and
-   coverage were skipped.
-3. **New behaviour has a test** that fails without the change. Don't lower coverage.
-4. **New packages are placed in the layer graph** (`.go-arch-lint.yml`).
-5. **No new `//nolint` without a reason**, and no raised complexity or coverage
-   thresholds to dodge a finding — split the function or add the test.
-6. **Report honestly.** If a step was skipped or a test failed, say so with the
-   output. Never claim green without having run the gate — and check the command's
-   exit status, not the tail of a pipeline (a `… | tail` hides a non-zero exit).
+It lives in [`AGENTS.md`](../AGENTS.md) → "Every task", step 4, with "Move the
+code, never the gate" under Guardrails — both are read on every task.

@@ -57,25 +57,16 @@ In request scope log via `logger.From(ctx)` (carries `request_id` + `user_id`, s
 by `middleware.ContextLogger` and `auth`). Background jobs get the same treatment
 from `queue.Worker.jobLogger` (`type`, `task_id`, and the `request_id` that
 enqueued the job, carried in the payload). For lifecycle code use the injected
-`*slog.Logger`. Never the global one — `sloglint` forbids `slog.Info` /
-`slog.Default` outside `cmd/`. Sensitive keys (`password`, `token`,
-`authorization`, …) are auto-redacted, but still don't log raw secrets.
+`*slog.Logger`. Sensitive keys (`password`, `token`, `authorization`, …) are
+auto-redacted.
 
-Three rules keep the log usable when something breaks:
+**Panics are recovered in two different places.** `middleware.Recoverer` catches
+HTTP handler panics; a panic inside a *resolver* is caught by gqlgen and goes through
+`graph.recoverPanic`. Keep that custom recover in place — gqlgen's default prints raw
+text to stderr.
 
-1. **The level is the severity, not the location.** `level=ERROR` must select
-   exactly the things that are our fault — 5xx responses, internal GraphQL
-   errors, failed jobs and queries. A client fault (4xx, `FORBIDDEN`,
-   `BAD_USER_INPUT`) is `WARN`. Routine traffic is `INFO`.
-2. **Every failure path leaves exactly one line, with the original message.** If
-   an error is masked for the client (production internal errors), the unmasked
-   text goes to the log first — see `newErrorPresenter`.
-3. **Panics are recovered in two different places.** `middleware.Recoverer`
-   catches HTTP handler panics; a panic inside a *resolver* is caught by gqlgen
-   and goes through `graph.recoverPanic`. Never leave gqlgen's default recover
-   in place — it prints raw text to stderr.
-4. **Every line is correlatable.** If you cannot get `request_id` onto a line,
-   put on it whatever identifies the work instead (`task_id`, `type`, `path`).
+The rules for what a log line says — level, one line per failure, correlation:
+[CODING_STANDARDS.md → Logs](./CODING_STANDARDS.md#logs).
 
 To read logs and triage failures: [../docs/DEBUGGING.md](../docs/DEBUGGING.md).
 
