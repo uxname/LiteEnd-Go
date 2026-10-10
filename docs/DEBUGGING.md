@@ -114,13 +114,18 @@ docker compose logs --no-log-prefix app | jq -c 'select(.msg=="http_request")' |
 ## Going to production: deeper observability (not built in)
 
 This template keeps observability to structured logs + health checks on purpose.
-When a derived project needs more, add (in order of usual value):
+A derived project that needs more connects to the shared observability stack —
+inside LiteStack, the meta-repo's `docs/observability/` (meta ADR-0009) describes
+the stack and, in `CONNECT.md`, the exact wiring for this backend:
 
-- **Error tracking** — Sentry (or similar): ship `panic_recovered`/`graphql_panic`/`job_panic`
-  with stacks to a remote service. DSN-gate it so it is a no-op when unset.
-- **Metrics** — Prometheus `/metrics` + Grafana: request rate/latency, error
-  rate by status, queue depth/retries, pool stats.
-- **Tracing** — OpenTelemetry across HTTP → resolver → DB/queue (the otel deps
-  are already present indirectly); propagate trace ids alongside `request_id`.
-- **Profiling** — `net/http/pprof` behind admin auth for CPU/heap/goroutine
-  investigations.
+- **Errors** → GlitchTip via `sentry-go`, captured at the error presenter and the
+  three panic sites (`graphql_panic`, `panic_recovered`, `job_panic`); DSN-gated, so
+  a no-op when unset.
+- **Traces and metrics** → OpenObserve via OpenTelemetry (HTTP → resolver → DB/queue;
+  the trace context rides in job payloads next to `request_id`).
+- **Logs** → OpenObserve, collected from stdout as they are today — no code change.
+- **Product events** → Rybbit, sent server-side for signups and other business events.
+
+Outside LiteStack the same list holds with any Sentry-compatible tracker and any
+OpenTelemetry backend. **Profiling** (`net/http/pprof` behind admin auth) stays a
+separate, on-demand addition.
