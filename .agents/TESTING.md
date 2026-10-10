@@ -1,26 +1,25 @@
 # Testing & TDD discipline
 
-**Tests are not optional here, and the rule is machine-enforced** — the same force
-as the frontend's trio rule.
+**Tests are machine-enforced**: the pre-push hook runs `task test:cov`, and a package
+(or the total) below its coverage floor fails the push.
 
 ## The discipline
 
-New business logic is written **test-first**
-([CODING_STANDARDS.md](./CODING_STANDARDS.md#tests-and-coverage-floors)): watch the
-test fail, then implement to green.
+New business logic is written **test-first**:
+[CODING_STANDARDS.md → Tests and coverage floors](./CODING_STANDARDS.md#tests-and-coverage-floors).
 
 `task test:cov` enforces **per-package coverage floors** from the `override` block in
 `.testcoverage.yml`, plus a total floor. New logic added to a domain package without
 tests drops that package under its floor and **fails the gate** — it cannot hide in
 the aggregate total.
 
-**`.testcoverage.yml` is the source of truth for the numbers — read it, don't trust a
-number quoted in prose (including here).** Two things about it:
+**`.testcoverage.yml` is the source of truth for the numbers; read them there.** Two
+things about it:
 
-- **Both** `override.path` and `exclude.paths` are **module-relative** (no module
-  prefix). Get it wrong and the entry silently does nothing — this doc used to claim
-  `exclude.paths` took a full import path, and the result was that generated gqlgen and
-  sqlc code was never actually excluded, dragging the reported total down by ~30 points.
+- **Both** `override.path` and `exclude.paths` are **module-relative** regexps
+  (`^internal/...`, no module prefix); a full import path matches nothing and the entry
+  silently does nothing. After editing either list, run `task test:cov` and confirm the
+  reported total (or that package's figure) moved.
 - How floors move (only up, in the same change): [CODING_STANDARDS.md](./CODING_STANDARDS.md#tests-and-coverage-floors).
 
 ## What new code must cover
@@ -38,14 +37,13 @@ explicitly.
 - **Integration/e2e tests** live in `test/` behind the `//go:build integration` tag
   and use **testcontainers-go** (real Postgres + Redis). They run sequentially
   (shared DB). Run with `task test:integration` (needs Docker).
-- Some packages (`queue`, `redis`, `db`) need a live server and are covered by the
-  integration suite rather than unit tests — don't duplicate that with mocks.
+- `queue`, `redis` and `db` need a live server: the integration suite covers them
+  against real Postgres and Redis.
 
 ## Coverage
 
 `task test:cov` runs every test with cross-package coverage and enforces
-`.testcoverage.yml`. It runs on **pre-push**. `task test:all` is the same tests
-without the coverage gate.
+`.testcoverage.yml`. `task test:all` is the same tests without the coverage gate.
 
 ## The real token check
 
@@ -56,6 +54,6 @@ an expired, foreign-issuer, foreign-audience or foreign-signature token is refus
 The middleware tests still build `NewMiddleware(nil, …)` with `mockEnabled=true` —
 that is their subject, not a gap.
 
-`config.OIDCClockSkew` (60s) is the tolerated clock drift between this host and the
+`config.OIDCClockSkew` is the tolerated clock drift between this host and the
 issuer, and it is tested from both sides: expired inside the tolerance passes,
 expired past it does not. Change the constant and that test tells you.

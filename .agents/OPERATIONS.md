@@ -2,12 +2,12 @@
 
 ## Auth is mandatory on every admin surface
 
-- External dashboards (pgweb, RedisInsight, Asynqmon, Garage Web UI) are exposed **only** through
-  the Caddy Basic-Auth proxy (`admin_proxy` in `docker-compose.yml`, `Caddyfile`).
-  **Never publish their container ports directly.**
+- An external dashboard (pgweb, RedisInsight, Asynqmon, Garage Web UI) is reachable
+  only as a site in the `Caddyfile`, served by the Basic-Auth proxy `admin_proxy`
+  (`docker-compose.yml`); the dashboard's own service lists no `ports:`. A new
+  dashboard follows the same pattern.
 - The app's own dev pages (`/dev`, `/playground`, `/docs`, `/openapi.yaml`) are
   wrapped with `middleware.BasicAuth` using `ADMIN_USER` / `ADMIN_PASSWORD`.
-- If you add a dashboard, put it behind the proxy too.
 - Garage's **admin API** (`[admin]`, port 3903) is on in `docker-compose.yml` only, for the
   Garage Web UI. Its port is **never published**, and `GARAGE_ADMIN_TOKEN` falls back to a
   fake dev value. That token reads every S3 secret key — set a real one
@@ -15,7 +15,7 @@
 
 The dev pages ship in production, so there `ADMIN_PASSWORD` is mandatory: the app
 refuses to boot on the `admin` default. They also have their own budget of
-`config.DevPagesRateLimit` (20) requests per minute per client address, charged
+`config.DevPagesRateLimit` requests per minute per client address, charged
 before the password is checked.
 
 Credentials: `ADMIN_USER` / `ADMIN_PASSWORD` (Go side) and `ADMIN_PASSWORD_HASH`
@@ -126,12 +126,11 @@ Four variables deserve special care:
   is every HTTP origin allowed and every browser WebSocket handshake refused with 403.
   List origins explicitly instead.
 
-- **`DB_POOL_MAX`** (default 10) is the pool size of **one** copy. The sizing rule,
-  spelled the same way in `.env.example`, `internal/config/config.go` and
-  `internal/db/pool.go`: replicas x `DB_POOL_MAX` must stay below the Postgres
-  `max_connections` limit (default 100). Leave room under it for migrations, `psql`
-  sessions and the dashboards. Cross it and Postgres refuses new connections —
-  copies start failing `/readyz` in turn while each one looks fine on its own.
+- **`DB_POOL_MAX`** (default 10) is the pool size of **one** copy: replicas x
+  `DB_POOL_MAX` stays below the Postgres `max_connections` limit (default 100), with
+  room left for migrations, `psql` sessions and the dashboards. Cross it and Postgres
+  refuses new connections — copies start failing `/readyz` in turn while each one
+  looks fine on its own.
 
 - **`TRUSTED_PROXY_HOPS`** (default 1) is how many reverse proxies actually sit in
   front of this app. The client address — the rate limiter's key — is taken that
@@ -139,8 +138,8 @@ Four variables deserve special care:
   to that header leaves only the rightmost entries beyond the caller's reach.
   **That is a requirement on your proxy, not a property of the header**: a proxy
   configured to forward the request untouched appends nothing, and then the
-  rightmost entry is the caller's own. `docs/DEPLOY.md` in the meta-repo carries the
-  per-proxy settings and a recipe for checking yours.
+  rightmost entry is the caller's own. Per-proxy settings and a one-request check:
+  [The proxy in front of the app](#the-proxy-in-front-of-the-app).
   `0` means no proxy, and then `X-Forwarded-For` and `X-Real-IP` are ignored
   entirely. Two is a perfectly normal value (a CDN or cloud load balancer in front
   of your own proxy). Both mistakes are silent: too **high** and the caller pads the
@@ -171,18 +170,19 @@ are private at all: [ADR-0003](../docs/adr/0003-files-are-private-and-served-thr
 
 ## Limits on untrusted work
 
-Every budget is a Redis GCRA limiter (`redis.Limiter`) and fails open if Redis
-does — noisily, one `rate limiter unavailable` Warn per event. Client addresses
+The table names each limit by its constant in `internal/config/constants.go`; read
+the value there. Every rate budget is a Redis GCRA limiter (`redis.Limiter`) and
+fails open if Redis does — noisily, one `rate limiter unavailable` Warn per event. Client addresses
 are the one `TRUSTED_PROXY_HOPS` resolves; IPv6 ones are bucketed by /64.
 
 | What | Budget | Where |
 |---|---|---|
-| HTTP requests, and every GraphQL operation sent over a WebSocket | 100/min per address (`rl:auth:<ip>` for /graphql and /upload) | `middleware.RateLimit`, `graph` `AroundOperations` |
-| GraphQL query | 128 KiB, 5000 tokens, complexity 200 — the first two refused before parse or cache | `graph.NewHandler` |
-| WebSocket | authenticated `connection_init` within 10 s; ping every 25 s; 128 KiB frames; 10 live subscriptions; closes when its bearer token expires | `graph.NewHandler` |
-| `addTestJob` | 512 characters; 30/min per user | resolver |
-| Uploads | 100 files/hour per user | `upload.Handler` |
-| Dev pages | 20/min per address | `app.devGate` |
+| HTTP requests, and every GraphQL operation sent over a WebSocket | `RateLimitMax` per `RateLimitWindow` per address (`rl:auth:<ip>` for /graphql and /upload) | `middleware.RateLimit`, `graph` `AroundOperations` |
+| GraphQL query | `GraphQLMaxQueryBytes`, `GraphQLMaxFields`, `GraphQLParserTokenLimit`, `GraphQLComplexityLimit` — all but the last refused before validation or cache | `graph.NewHandler` |
+| WebSocket | authenticated `connection_init` within `WSInitTimeout`; ping every `WSPingPongInterval`; frames up to `WSPayloadReadLimit`; `WSMaxSubscriptionsPerConn` live subscriptions; closes when its bearer token expires | `graph.NewHandler` |
+| `addTestJob` | `TestJobMessageMaxLen` characters; `TestJobsPerMinute` per user | resolver |
+| Uploads | `UploadFilesPerHour` per user | `upload.Handler` |
+| Dev pages | `DevPagesRateLimit` per minute per address | `app.devGate` |
 
 Profile events use **one** Redis subscription per process (`PSUBSCRIBE
 profile:updated:*`), fanned out in-process — a client cannot open Redis
@@ -192,7 +192,7 @@ connections by subscribing. The decision record is [ADR-0004](../docs/adr/0004-w
 
 No API grants or revokes a role: `profiles.roles` is edited in the database. The
 auth path reads a profile — roles included — from its Redis copy
-(`profile:sub:<oidc_sub>`, `config.ProfileCacheTTL` = 5 minutes), so a revoked
+(`profile:sub:<oidc_sub>`, kept for `config.ProfileCacheTTL`), so a revoked
 role keeps working until that copy expires. To make a change take effect at once,
 drop the copy in the same breath:
 
@@ -273,11 +273,12 @@ A `rate:rl:9.9.9.9` key means the forged value bought its own bucket.
 
 ### Give the readiness probe more than 5 seconds
 
-`/readyz` pings Postgres and Redis under a 5-second budget of its own
+`/readyz` pings Postgres and Redis under a budget of its own
 (`config.HealthCheckTimeout`). A proxy whose probe timeout is shorter cuts the answer
 off mid-flight, so live dependencies are reported unavailable: the copy leaves rotation
 and the log gets a warning per dependency that never failed. Set the proxy's health
-timeout above 5s — `scale/Caddyfile` uses 6s for exactly this reason.
+timeout above it — the LiteStack meta-repo's `scale/Caddyfile` uses 6s for exactly this
+reason.
 
 ### Known limit: `X-Real-IP` is believed without counting
 

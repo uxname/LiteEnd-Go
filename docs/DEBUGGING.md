@@ -10,9 +10,8 @@ codebase. Pair it with `internal/graph/errors.go` (error codes) and
 Logs are **structured JSON on stdout** (`log/slog`, see `internal/logger`).
 Level via `LOG_LEVEL` (`debug|info|warn|error`, any case, default `info`). Any
 other value — `warning`, `trace`, a typo — **stops the boot** with the offending
-string in the error, rather than quietly running at `info`. Sensitive keys
-(`password`, `token`, `secret`, `authorization`, `credentials`, `cookie`, `sig`)
-are redacted to `[REDACTED]` automatically.
+string in the error, rather than quietly running at `info`. Attributes under a
+key in `sensitiveKeys` (`internal/logger/logger.go`) read `[REDACTED]`.
 
 Key log lines (the `msg` field):
 
@@ -24,16 +23,15 @@ Key log lines (the `msg` field):
 | `panic_recovered` | HTTP handler panic | `panic`, `stack`, `method`, `path`, `request_id` |
 | `graphql_panic` | panic **inside a resolver** (gqlgen recovers these, not the HTTP middleware) | `panic`, `stack`, `request_id` |
 | `upload_error` | rejected or failed upload | `status`, `reason` (the client-facing message), `error` (the real cause), `request_id` |
-| `db_query_slow` | query over 200 ms | `sql`, `duration_ms`, `request_id` |
+| `db_query_slow` | query over `config.DBSlowQueryThreshold` | `sql`, `duration_ms`, `request_id` |
 | `db_query_failed` | query returned an error | `sql`, `duration_ms`, `error`, `request_id` |
 | `job_started` / `job_finished` | each background job | `type`, `task_id`, `request_id`, `duration_ms`, `ok` |
 | `job_panic` | panic inside a job | `type`, `task_id`, `panic`, `stack` |
 | `job_failed` | job returned an error | `type`, `task_id`, `request_id`, `attempt`, `max_retry`, `error` |
 
-**The level tells you whose fault it is.** `ERROR` = ours (5xx, internal GraphQL
-error, failed job, failed query); `WARN` = the caller's (4xx, `UNAUTHENTICATED`,
-`FORBIDDEN`, `BAD_USER_INPUT`, a slow query, a rejected token); `INFO` = routine.
-So `level=ERROR` is a real incident feed, not a category of message.
+**`level=ERROR` is the incident feed**: it selects what is our fault and nothing
+else. What each level means:
+[CODING_STANDARDS.md → Logs](../.agents/CODING_STANDARDS.md#logs).
 
 **Correlation is the point:** every request-scoped line carries `request_id`
 (and `user_id` once authenticated), added by `middleware.ContextLogger` and
@@ -95,7 +93,7 @@ docker compose logs --no-log-prefix app | jq -c 'select(.msg=="http_request")' |
 | `/readyz` returns 503 | Postgres or Redis unusable — nothing else can cause it | Body names the failing check (`database` / `redis`). Ensure `docker compose up -d db redis`. The `memory` entry in the same body is diagnostics and never the reason for a 503. `/livez` stays 200 through all of this on purpose — it only says the process is alive. |
 | `updateProfile` answers `BAD_USER_INPUT`: "avatarUrl must be a file you uploaded" | The key in that link has no `uploads` row naming this profile as its uploader. Three ways to get there: the file really is someone else's; the link was hand-edited; or the upload predates migration `00002`, which added the owner column and left older rows ownerless. The avatar already stored keeps working either way — reads sign what the profile holds. Fix for the third case: upload the image again, or backfill `uploads.uploader_profile_id`. |
 | A file link answers **403**, and the app logged nothing | The request never reached the app — the storage refused it. In private mode (`FILE_VISIBILITY`, the default) a link without a signature is exactly this: someone kept the permanent URL, or a client stripped the query. Ask the API for the file again — every read issues a fresh link. If EVERY link 403s, the bucket is closed but the app thinks it is public, or vice versa: `docker compose up -d` re-runs `garage-init`, which sets the bucket to match the variable. |
-| A file link answers **400** (`Request has expired` / `SignatureDoesNotMatch`) | Expired: the link outlived `FILE_LINK_TTL_MINUTES` — normal for a page cached longer than that; re-read the profile. Mismatched: something rewrote the request between the browser and the bucket. A signature covers host and path, so a proxy that strips a prefix (`handle_path`) or overrides `Host` breaks every link — compare `scale/Caddyfile`, which deliberately does neither. |
+| A file link answers **400** (`Request has expired` / `SignatureDoesNotMatch`) | Expired: the link outlived `FILE_LINK_TTL_MINUTES` — normal for a page cached longer than that; re-read the profile. Mismatched: something rewrote the request between the browser and the bucket. A signature covers host and path, so a proxy that strips a prefix (`handle_path`) or overrides `Host` breaks every link — compare the LiteStack meta-repo's `scale/Caddyfile`, which deliberately does neither. |
 | Upload answers 400; `upload_error` has `error: "sign link … dial tcp …: connect: connection refused"` | The link signer could not reach the storage to learn its region. It asks through `S3_ENDPOINT` (the internal address) on the first upload after a start — so this is `S3_ENDPOINT` pointing somewhere unreachable, or the storage being down, not a problem with `S3_PUBLIC_BASE_URL`. |
 | Upload answers 500; `upload_error` has `reason: "Failed to save metadata"` | Read the `error` field on that line — it names the real cause, either the object storage or Postgres | Storage down locally (`task setup` / `task start:dev` start it, but a manual `docker compose stop garage` or a crash leaves it off): `docker compose up -d garage garage-init`. Otherwise check `S3_ENDPOINT` — that is the address **the app** connects to, not the public `S3_PUBLIC_BASE_URL`. Atomicity is per file: the files committed before the failure keep both their object and their row, and the one that failed leaves neither. |
 | Upload succeeds but the returned link 404s in the browser | `S3_PUBLIC_BASE_URL` wrong | It must be the prefix **the browser** resolves, bucket name included; the URL is that value + `/` + the object key. |

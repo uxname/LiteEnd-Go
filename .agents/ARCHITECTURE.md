@@ -25,8 +25,8 @@ Enforced by one gate inside `task check`:
   `logger`, `version`, `httperr`, `clientip`) that any layer may import.
 
 When you add an `internal/*` package, place it in the right component in
-`.go-arch-lint.yml`. **Never widen a layer's `mayDependOn` to make a
-wrong-direction import compile.**
+`.go-arch-lint.yml`. A wrong-direction import is fixed by moving the code:
+[AGENTS.md → Guardrails](../AGENTS.md#guardrails).
 
 > **Known gap, don't mistake green for clean.** The current rules allow
 > `transport → infrastructure` and `domain → infrastructure`, and `sqlc.Profile`
@@ -57,15 +57,15 @@ In request scope log via `logger.From(ctx)` (carries `request_id` + `user_id`, s
 by `middleware.ContextLogger` and `auth`). Background jobs get the same treatment
 from `queue.Worker.jobLogger` (`type`, `task_id`, and the `request_id` that
 enqueued the job, carried in the payload). For lifecycle code use the injected
-`*slog.Logger`. Sensitive keys (`password`, `token`, `authorization`, …) are
-auto-redacted.
+`*slog.Logger`.
 
 **Panics are recovered in two different places.** `middleware.Recoverer` catches
 HTTP handler panics; a panic inside a *resolver* is caught by gqlgen and goes through
 `graph.recoverPanic`. Keep that custom recover in place — gqlgen's default prints raw
 text to stderr.
 
-The rules for what a log line says — level, one line per failure, correlation:
+The rules for what a log line says — level, redaction, one line per failure,
+correlation:
 [CODING_STANDARDS.md → Logs](./CODING_STANDARDS.md#logs).
 
 To read logs and triage failures: [../docs/DEBUGGING.md](../docs/DEBUGGING.md).
@@ -118,9 +118,8 @@ promise the event arrives.
   type PageInfo { hasNextPage: Boolean!, endCursor: String }
   ```
 
-  The template schema has no such field yet and none is being added — this is a rule for
-  when you add the first one. A fixed array of enums or scalars (like `Profile.roles`) is
-  not a collection and this rule does not apply to it.
+  The rule applies from the first list field you add. A fixed array of enums or scalars
+  (like `Profile.roles`) is not a collection and this rule does not apply to it.
 - **A DB query** → add it to `db/queries/*.sql` with a `-- name:` annotation →
   `task gen` → use `database.Queries.<Name>`.
 - **A new enum/array column** → add a migration; if it's an enum, register its type

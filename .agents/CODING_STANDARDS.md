@@ -7,7 +7,9 @@ Holds for everything in this repo. Inside the LiteStack meta-repo it refines the
 
 - **New logic is written test-first** — a resolver, service, job or middleware gets the
   test that encodes its behaviour (success path + key failure modes) before the code.
-  Tests check behaviour, not lines.
+  Run the new test and see it go *red* on the missing behaviour (not on a compile
+  error), then write code until it is green — done when you have seen both. Tests check
+  behaviour, not lines.
 - **Run `task test:cov` before you finish.** When the measured coverage rose, raise the
   floors in `.testcoverage.yml` to just under the new numbers in the same change — a
   point or two of headroom, no more. A floor left below the real number is a hole new
@@ -22,11 +24,16 @@ What new code must cover, unit vs integration: [TESTING.md](./TESTING.md).
 Where each logger comes from: [ARCHITECTURE.md → Logging](./ARCHITECTURE.md#logging).
 
 - **Log through what you were given**: `logger.From(ctx)` in request scope, the injected
-  `*slog.Logger` elsewhere (`sloglint` rejects the global one outside `cmd/`). Keys
-  like `password` and `token` are redacted, but raw secrets stay out of messages too.
+  `*slog.Logger` elsewhere (`sloglint` rejects the global one outside `cmd/`).
+- **Secrets stay out of the text.** An attribute whose key is in `sensitiveKeys`
+  (`internal/logger/logger.go`, matched case-insensitively) is written as `[REDACTED]`;
+  a message string is written as is, so keep raw secrets out of it.
 - **The level is the severity, not the location.** `ERROR` selects exactly what is our
-  fault — 5xx responses, internal GraphQL errors, failed jobs and queries. A client
-  fault (4xx, `FORBIDDEN`, `BAD_USER_INPUT`) is `WARN`. Routine traffic is `INFO`.
+  fault — 5xx responses, internal GraphQL errors, panics, failed jobs and failed
+  queries (`db_query_failed`). `WARN` is a client fault — 4xx, `UNAUTHENTICATED`,
+  `FORBIDDEN`, `BAD_USER_INPUT`, a rejected token — or trouble the request survived: a
+  slow query (`db_query_slow`), Redis unavailable behind the cache or the rate limiter.
+  Routine traffic is `INFO`. HTTP status → level is `middleware.statusLevel`.
 - **Every failure path leaves exactly one line, with the original message.** An error
   masked for the client logs its unmasked text first — see `newErrorPresenter`.
 - **Every line is correlatable.** Where `request_id` cannot reach a line, put on it
