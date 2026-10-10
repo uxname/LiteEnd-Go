@@ -17,11 +17,13 @@ Run it by hand before committing if you want to fail fast. It fails on:
 
 1. **Stale generated code** (`task gen:check` — sqlc/gqlgen out of sync).
 2. **`go.mod`/`go.sum` not tidy** (`task tidy:check`).
-3. **Lint** issues (`golangci-lint`, includes `gci` import ordering).
-4. **Architecture** violations (`task arch` — go-arch-lint: layering, cross-package
+3. **Compose files that do not render** (`task compose:check` — schema, interpolation,
+   `:?` guards; skipped with a warning if docker is absent).
+4. **Lint** issues (`golangci-lint`, includes `gci` import ordering).
+5. **Architecture** violations (`task arch` — go-arch-lint: layering, cross-package
    call edges, import cycles).
-5. **Dead code** anywhere in the program (`task deadcode`).
-6. **Secrets** (`gitleaks`, **skipped with a warning if gitleaks is absent** — a green
+6. **Dead code** anywhere in the program (`task deadcode`).
+7. **Secrets** (`gitleaks`, **skipped with a warning if gitleaks is absent** — a green
    run on a machine without it proves nothing).
 
 > `gen:check` regenerates and then diffs the **working tree**, so a legitimate
