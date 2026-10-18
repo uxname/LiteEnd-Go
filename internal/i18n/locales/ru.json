@@ -10,5 +10,5 @@
   "errors.profileNotFound": "Профиль не найден",
   "errors.accountsNotFound": "Аккаунты не найдены",
   "errors.invalidToken": "Неверный токен",
-  "errors.totpTokenNotSet": "Токен не установлен"
+  "errors.totpTokenNotSet": "TOTP-токен не установлен"
 }
