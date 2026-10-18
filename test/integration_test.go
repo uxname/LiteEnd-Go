@@ -24,11 +24,10 @@ import (
 
 	coderws "github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -46,16 +45,34 @@ var (
 	publicBaseURL string
 )
 
-// Object storage credentials for the throwaway MinIO container. MinIO is the
-// S3-compatible server used here because it is S3-ready the moment it boots;
-// the code under test only speaks S3 through minio-go. Pulled from quay.io:
-// MinIO no longer serves its images from Docker Hub, so the Docker Hub name
-// only worked on machines that still had it cached.
+// The throwaway object storage: Garage, the same image and digest the dev compose
+// and the scale stand run, so the suite exercises the S3 server the stack
+// actually ships with (MinIO, used here before, stopped publishing images on
+// both Docker Hub and quay.io). The code under test only speaks S3 through
+// minio-go. Garage dictates the key shape: the id is "GK" + 24 hex digits, the
+// secret 64 hex digits. All zeros, so no secret scanner mistakes them for real.
 const (
-	s3Image    = "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"
-	s3RootUser = "liteend-test-user"
-	s3RootPass = "liteend-test-pass"
-	s3Bucket   = "uploads"
+	s3Image     = "dxflrs/garage:v2.1.0@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a"
+	s3AccessKey = "GK000000000000000000000000"
+	s3SecretKey = "0000000000000000000000000000000000000000000000000000000000000000"
+	s3Bucket    = "uploads"
+
+	// garageConfig is a single node keeping one copy of every block, with the
+	// S3 API only: the suite needs neither the web endpoint nor the admin API.
+	// The CLI that initGarage runs inside the container reaches the node at
+	// rpc_public_addr, authenticated by garageRPCSecret.
+	garageConfig = `metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "lmdb"
+replication_factor = 1
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+`
+	garageRPCSecret = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 
 	// pgPassword carries every character that breaks a connection URL assembled
 	// by hand ("/", "#", "?", "%", "@"). The whole suite boots through it, so both
@@ -81,26 +98,25 @@ func TestMain(m *testing.M) {
 	must(err)
 	s3C, err := testcontainers.Run(
 		ctx, s3Image,
-		testcontainers.WithExposedPorts("9000/tcp"),
-		testcontainers.WithEnv(map[string]string{
-			"MINIO_ROOT_USER":     s3RootUser,
-			"MINIO_ROOT_PASSWORD": s3RootPass,
+		testcontainers.WithExposedPorts("3900/tcp"),
+		testcontainers.WithEnv(map[string]string{"GARAGE_RPC_SECRET": garageRPCSecret}),
+		testcontainers.WithFiles(testcontainers.ContainerFile{
+			Reader: strings.NewReader(garageConfig), ContainerFilePath: "/etc/garage.toml", FileMode: 0o644,
 		}),
-		testcontainers.WithCmd("server", "/data"),
 		testcontainers.WithWaitStrategy(
-			wait.ForHTTP("/minio/health/live").WithPort("9000/tcp").WithStartupTimeout(60*time.Second),
+			wait.ForListeningPort("3900/tcp").WithStartupTimeout(60*time.Second),
 		),
 	)
 	must(err)
+	must(initGarage(ctx, s3C))
 
 	pgHost, _ := pgC.Host(ctx)
 	pgPort, _ := pgC.MappedPort(ctx, "5432/tcp")
 	rdHost, _ := rdC.Host(ctx)
 	rdPort, _ := rdC.MappedPort(ctx, "6379/tcp")
 	s3Host, _ := s3C.Host(ctx)
-	s3Port, _ := s3C.MappedPort(ctx, "9000/tcp")
+	s3Port, _ := s3C.MappedPort(ctx, "3900/tcp")
 	s3Addr := net.JoinHostPort(s3Host, s3Port.Port())
-	must(createBucket(ctx, s3Addr))
 	publicBaseURL = "http://" + s3Addr + "/" + s3Bucket
 
 	setenv(map[string]string{
@@ -122,8 +138,8 @@ func TestMain(m *testing.M) {
 		// is the one handed to the browser (here they coincide, in the stack the
 		// public one goes through the proxy).
 		"S3_ENDPOINT":          "http://" + s3Addr,
-		"S3_ACCESS_KEY_ID":     s3RootUser,
-		"S3_SECRET_ACCESS_KEY": s3RootPass,
+		"S3_ACCESS_KEY_ID":     s3AccessKey,
+		"S3_SECRET_ACCESS_KEY": s3SecretKey,
 		"S3_BUCKET":            s3Bucket,
 		"S3_PUBLIC_BASE_URL":   publicBaseURL,
 		// Files are private (the default): the bucket refuses anonymous readers
@@ -567,19 +583,44 @@ func createImagePart(w *multipart.Writer, field, filename string) (io.Writer, er
 	return w.CreatePart(h)
 }
 
-// createBucket creates the uploads bucket and leaves it CLOSED to anonymous
-// readers — the state the storage init container leaves behind in the deployed
-// stack when FILE_VISIBILITY is private, which is the default. The door test
-// below is what makes that closed door a fact rather than an assumption.
-func createBucket(ctx context.Context, addr string) error {
-	cl, err := minio.New(addr, &minio.Options{
-		Creds:  credentials.NewStaticV4(s3RootUser, s3RootPass, ""),
-		Secure: false,
-	})
+// initGarage does what the garage-init container does in the dev compose: a
+// fresh Garage has no layout, no access key and no bucket. It leaves the bucket
+// CLOSED to anonymous readers — the state the deployed stack is in when
+// FILE_VISIBILITY is private, which is the default. The door test below is what
+// makes that closed door a fact rather than an assumption. The image is FROM
+// scratch, so each step execs the garage binary itself; there is no shell.
+func initGarage(ctx context.Context, c testcontainers.Container) error {
+	run := func(args ...string) (string, error) {
+		code, r, err := c.Exec(ctx, append([]string{"/garage"}, args...), tcexec.Multiplexed())
+		if err != nil {
+			return "", err
+		}
+		out, _ := io.ReadAll(r)
+		if code != 0 {
+			return "", fmt.Errorf("garage %v: exit %d: %s", args, code, out)
+		}
+		return string(out), nil
+	}
+	id, err := run("node", "id", "-q")
 	if err != nil {
 		return err
 	}
-	return cl.MakeBucket(ctx, s3Bucket, minio.MakeBucketOptions{})
+	nodeID, _, _ := strings.Cut(strings.TrimSpace(id), "@")
+	steps := [][]string{
+		{"layout", "assign", "-z", "dc1", "-c", "1G", nodeID},
+		{"layout", "apply", "--version", "1"},
+		// Import the configured pair rather than create a random one, so the
+		// app authenticates with exactly what setenv hands it.
+		{"key", "import", "--yes", "-n", "liteend", s3AccessKey, s3SecretKey},
+		{"bucket", "create", s3Bucket},
+		{"bucket", "allow", "--read", "--write", s3Bucket, "--key", s3AccessKey},
+	}
+	for _, st := range steps {
+		if _, err := run(st...); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func setenv(m map[string]string) {

@@ -35,8 +35,8 @@ explicitly.
   `task test` (race detector on). Put `t.Parallel()` at the top of each unit test
   (the linter enforces it); the exception is tests that call `t.Setenv`.
 - **Integration/e2e tests** live in `test/` behind the `//go:build integration` tag
-  and use **testcontainers-go** (real Postgres + Redis). They run sequentially
-  (shared DB). Run with `task test:integration` (needs Docker).
+  and use **testcontainers-go** (real Postgres, Redis and Garage for S3). They run
+  sequentially (shared DB). Run with `task test:integration` (needs Docker).
 - `queue`, `redis` and `db` need a live server: the integration suite covers them
   against real Postgres and Redis.
 
