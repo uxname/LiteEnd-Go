@@ -4,7 +4,8 @@
 *.exe
 
 # Data & runtime
-data/
+/data/
+/test/data/
 *.log
 
 # Env
