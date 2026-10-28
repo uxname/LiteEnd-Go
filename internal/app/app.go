@@ -123,11 +123,13 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 		cfg.IsProduction(), cfg.CORSOrigin)
 
 	mountRoutes(srv.Router(), routeDeps{
-		live:       health.Live(),
-		ready:      health.New(database, rdb).Ready(),
-		graphql:    gqlHandler,
-		graphqlMW:  []func(http.Handler) http.Handler{translator.Middleware, authMW.Optional},
-		upload:     upload.NewHandler(uploadSvc, rdb.Limiter(config.UploadFilesPerHour, time.Hour)),
+		live:      health.Live(),
+		ready:     health.New(database, rdb).Ready(),
+		graphql:   gqlHandler,
+		graphqlMW: []func(http.Handler) http.Handler{translator.Middleware, authMW.Optional},
+		// docc:begin avatar#^dg6c@efhr ~6e5v
+		upload: upload.NewHandler(uploadSvc, rdb.Limiter(config.UploadFilesPerHour, time.Hour)),
+		// docc:end
 		uploadAuth: authMW.RequireAuth,
 		devAuth:    devGate(rdb.Limiter(config.DevPagesRateLimit, time.Minute), cfg),
 		devLinks:   devLinks(cfg),

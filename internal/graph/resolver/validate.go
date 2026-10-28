@@ -23,12 +23,14 @@ func badInput(msg string) *gqlerror.Error {
 // before they are persisted (the columns are unbounded TEXT, and URL is a bare
 // String scalar, so the database does not constrain them).
 func validateProfileUpdate(in model.ProfileUpdateInput) error {
+	// docc:begin profile#^5mqw@bnce ~258y
 	if in.DisplayName != nil && utf8.RuneCountInString(*in.DisplayName) > config.ProfileDisplayNameMaxLen {
 		return badInput(fmt.Sprintf("displayName must be at most %d characters", config.ProfileDisplayNameMaxLen))
 	}
 	if in.Bio != nil && utf8.RuneCountInString(*in.Bio) > config.ProfileBioMaxLen {
 		return badInput(fmt.Sprintf("bio must be at most %d characters", config.ProfileBioMaxLen))
 	}
+	// docc:end
 	if in.AvatarURL != nil {
 		if utf8.RuneCountInString(*in.AvatarURL) > config.ProfileAvatarURLMaxLen {
 			return badInput(fmt.Sprintf("avatarUrl must be at most %d characters", config.ProfileAvatarURLMaxLen))

@@ -64,9 +64,11 @@ const (
 	TestJobsPerMinute = 30
 
 	// Profile field limits (enforced before persistence).
+	// docc:begin profile#^bzhw@g4uw, profile#^5mqw@bnce ~cftv
 	ProfileDisplayNameMaxLen = 100
 	ProfileBioMaxLen         = 1000
-	ProfileAvatarURLMaxLen   = 2048
+	// docc:end
+	ProfileAvatarURLMaxLen = 2048
 
 	// HTTP server timeouts. ReadHeaderTimeout caps slow header sends; ReadTimeout
 	// and WriteTimeout bound the full request/response (Slow Loris protection);
@@ -138,12 +140,16 @@ const (
 	ProfileCacheKeyPrefix = "profile:sub:"
 
 	// Upload limits (per @fastify/multipart config).
+	// docc:begin avatar#^b6nc@7wyq ~fedm
 	UploadMaxFileSize = 5 * 1024 * 1024
-	UploadMaxFiles    = 10
+	// docc:end
+	UploadMaxFiles = 10
 	// UploadMaxFilenameBytes bounds the client filename kept as metadata.
 	UploadMaxFilenameBytes = 255
 	// UploadFilesPerHour is each user's budget of stored files.
+	// docc:begin avatar#^dg6c@efhr ~s5df
 	UploadFilesPerHour = 100
+	// docc:end
 
 	// File visibility modes, the two values FILE_VISIBILITY takes.
 	// Private is the default: files are reachable only through a signed link.

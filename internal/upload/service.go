@@ -44,10 +44,12 @@ const sniffLen = 512
 // objects are stored under. The extension comes from here, from the sniffed
 // type — never from the client's filename.
 var allowedMimeTypes = map[string]string{ //nolint:gochecknoglobals // static mime allowlist
+	// docc:begin avatar#^b6nc@7wyq ~6gp6
 	"image/png":  ".png",
 	"image/jpeg": ".jpg",
 	"image/gif":  ".gif",
 	"image/webp": ".webp",
+	// docc:end
 }
 
 // Writer is the subset of sqlc used to persist and read back upload metadata.
@@ -191,6 +193,7 @@ func (s *Service) linkSignerFor(ctx context.Context) (linkSigner, error) {
 // same URL without the signature, and refuses it again once the signature
 // expires — so the link is handed out fresh on every read rather than stored.
 func (s *Service) LinkFor(ctx context.Context, key string) (string, error) {
+	// docc:begin avatar#^t25x@tmmx ~aqte
 	if s.public {
 		return s.PermanentLink(key), nil
 	}
@@ -203,6 +206,7 @@ func (s *Service) LinkFor(ctx context.Context, key string) (string, error) {
 		return "", fmt.Errorf("sign link for %q: %w", key, err)
 	}
 	return signed.String(), nil
+	// docc:end
 }
 
 // OwnedBy reports whether the object under key was uploaded by this profile.
@@ -304,6 +308,7 @@ func AllowedMime(mimetype string) bool {
 func (s *Service) ProcessFile(
 	ctx context.Context, originalFilename, mimetype string, body io.Reader,
 ) (*SavedFile, error) {
+	// docc:begin avatar#^b6nc@7wyq ~b7vv
 	// Cheap early reject on the client-declared content-type before reading on.
 	if !AllowedMime(mimetype) {
 		return nil, ErrDisallowedMime
@@ -333,6 +338,7 @@ func (s *Service) ProcessFile(
 	if int64(len(data)) > config.UploadMaxFileSize {
 		return nil, ErrFileTooLarge
 	}
+	// docc:end
 
 	key := objectKey(time.Now().UTC(), detected)
 	link, err := s.LinkFor(ctx, key)

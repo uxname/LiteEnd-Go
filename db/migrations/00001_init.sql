@@ -9,7 +9,9 @@ CREATE TABLE profiles (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     oidc_sub     TEXT NOT NULL,
+    -- docc:begin auth#^f48m@emrv ~y7t2
     roles        profile_role[] NOT NULL DEFAULT ARRAY['USER']::profile_role[],
+    -- docc:end
     avatar_url   TEXT,
     display_name TEXT,
     bio          TEXT

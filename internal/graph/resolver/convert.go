@@ -73,6 +73,7 @@ func (r *Resolver) storedAvatar(ctx context.Context, profileID int32, link *stri
 	if link == nil || r.Files == nil {
 		return link, nil
 	}
+	// docc:begin avatar#^35w7@jw6q ~95qv
 	key, ours := r.Files.KeyFromLink(*link)
 	if !ours {
 		return link, nil
@@ -84,6 +85,7 @@ func (r *Resolver) storedAvatar(ctx context.Context, profileID int32, link *stri
 	if !owned {
 		return nil, badInput("avatarUrl must be a file you uploaded")
 	}
+	// docc:end
 	permanent := r.Files.PermanentLink(key)
 	return &permanent, nil
 }

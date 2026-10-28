@@ -11,7 +11,6 @@ coverage.html
 .env
 .env.*
 .agents
-.beads
 docs
 README.md
 AGENTS.md

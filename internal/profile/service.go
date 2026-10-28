@@ -59,6 +59,7 @@ func cacheKey(sub string) string { return config.ProfileCacheKeyPrefix + sub }
 // FindOrCreateBySub returns the profile for an OIDC subject, creating it if
 // absent. Results are cached in Redis for ProfileCacheTTL.
 func (s *Service) FindOrCreateBySub(ctx context.Context, sub string) (sqlc.Profile, error) {
+	// docc:begin auth#^f48m@emrv ~mrb9
 	if p, ok := s.fromCache(ctx, sub); ok {
 		return p, nil
 	}
@@ -75,6 +76,7 @@ func (s *Service) FindOrCreateBySub(ctx context.Context, sub string) (sqlc.Profi
 
 	s.toCache(ctx, p)
 	return p, nil
+	// docc:end
 }
 
 // create inserts the profile for sub. The find-or-create race — a concurrent
