@@ -28,7 +28,7 @@ const blankChars = " \t\n\v\f\r"
 // before they are persisted (the columns are unbounded TEXT, and URL is a bare
 // String scalar, so the database does not constrain them).
 func validateProfileUpdate(in model.ProfileUpdateInput) error {
-	// docc:begin profile#^5mqw@bnce ~258y
+	// docc:begin profile#^PRO-2@bnce ~258y
 	if in.DisplayName != nil && utf8.RuneCountInString(*in.DisplayName) > config.ProfileDisplayNameMaxLen {
 		return badInput(fmt.Sprintf("displayName must be at most %d characters", config.ProfileDisplayNameMaxLen))
 	}

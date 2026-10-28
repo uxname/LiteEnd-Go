@@ -44,7 +44,7 @@ const sniffLen = 512
 // objects are stored under. The extension comes from here, from the sniffed
 // type — never from the client's filename.
 var allowedMimeTypes = map[string]string{ //nolint:gochecknoglobals // static mime allowlist
-	// docc:begin avatar#^b6nc@7wyq ~6gp6
+	// docc:begin avatar#^AVA-1@7wyq ~6gp6
 	"image/png":  ".png",
 	"image/jpeg": ".jpg",
 	"image/gif":  ".gif",
@@ -193,7 +193,7 @@ func (s *Service) linkSignerFor(ctx context.Context) (linkSigner, error) {
 // same URL without the signature, and refuses it again once the signature
 // expires — so the link is handed out fresh on every read rather than stored.
 func (s *Service) LinkFor(ctx context.Context, key string) (string, error) {
-	// docc:begin avatar#^t25x@tmmx ~aqte
+	// docc:begin avatar#^AVA-3@tmmx ~aqte
 	if s.public {
 		return s.PermanentLink(key), nil
 	}
@@ -308,7 +308,7 @@ func AllowedMime(mimetype string) bool {
 func (s *Service) ProcessFile(
 	ctx context.Context, originalFilename, mimetype string, body io.Reader,
 ) (*SavedFile, error) {
-	// docc:begin avatar#^b6nc@7wyq ~b7vv
+	// docc:begin avatar#^AVA-1@7wyq ~b7vv
 	// Cheap early reject on the client-declared content-type before reading on.
 	if !AllowedMime(mimetype) {
 		return nil, ErrDisallowedMime

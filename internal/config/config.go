@@ -72,7 +72,7 @@ type Config struct {
 	//	                    holding the URL keeps access forever.
 	//
 	// It is a deployment decision, not a per-file one: see docs/adr/0003.
-	// docc:begin avatar#^t25x@tmmx ~r9zt
+	// docc:begin avatar#^AVA-3@tmmx ~r9zt
 	FileVisibility string `env:"FILE_VISIBILITY" envDefault:"private"`
 	// docc:end
 	// FileLinkTTLMinutes is how long a signed link stays valid. Only read in
@@ -81,7 +81,7 @@ type Config struct {
 	// is a broken image, and the default is picked for that side of the trade:
 	// an hour outlives a cached page, a lazily-scrolled list and a coffee break.
 	// Lower it when the files are worth more than the convenience.
-	// docc:begin avatar#^t25x@tmmx ~9932
+	// docc:begin avatar#^AVA-3@tmmx ~9932
 	FileLinkTTLMinutes int `env:"FILE_LINK_TTL_MINUTES" envDefault:"60"`
 	// docc:end
 

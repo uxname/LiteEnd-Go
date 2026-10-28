@@ -73,7 +73,7 @@ func (r *Resolver) storedAvatar(ctx context.Context, profileID int32, link *stri
 	if link == nil || r.Files == nil {
 		return link, nil
 	}
-	// docc:begin avatar#^35w7@jw6q ~95qv
+	// docc:begin avatar#^AVA-4@jw6q ~95qv
 	key, ours := r.Files.KeyFromLink(*link)
 	if !ours {
 		return link, nil

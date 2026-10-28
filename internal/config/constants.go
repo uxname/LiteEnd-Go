@@ -64,7 +64,7 @@ const (
 	TestJobsPerMinute = 30
 
 	// Profile field limits (enforced before persistence).
-	// docc:begin profile#^bzhw@g4uw, profile#^5mqw@bnce ~cftv
+	// docc:begin profile#^PRO-1@g4uw, profile#^PRO-2@bnce ~cftv
 	ProfileDisplayNameMaxLen = 100
 	ProfileBioMaxLen         = 1000
 	// docc:end
@@ -140,14 +140,14 @@ const (
 	ProfileCacheKeyPrefix = "profile:sub:"
 
 	// Upload limits (per @fastify/multipart config).
-	// docc:begin avatar#^b6nc@7wyq ~fedm
+	// docc:begin avatar#^AVA-1@7wyq ~fedm
 	UploadMaxFileSize = 5 * 1024 * 1024
 	// docc:end
 	UploadMaxFiles = 10
 	// UploadMaxFilenameBytes bounds the client filename kept as metadata.
 	UploadMaxFilenameBytes = 255
 	// UploadFilesPerHour is each user's budget of stored files.
-	// docc:begin avatar#^dg6c@efhr ~s5df
+	// docc:begin avatar#^AVA-2@efhr ~s5df
 	UploadFilesPerHour = 100
 	// docc:end
 

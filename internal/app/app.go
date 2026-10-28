@@ -127,7 +127,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 		ready:     health.New(database, rdb).Ready(),
 		graphql:   gqlHandler,
 		graphqlMW: []func(http.Handler) http.Handler{translator.Middleware, authMW.Optional},
-		// docc:begin avatar#^dg6c@efhr ~6e5v
+		// docc:begin avatar#^AVA-2@efhr ~6e5v
 		upload: upload.NewHandler(uploadSvc, rdb.Limiter(config.UploadFilesPerHour, time.Hour)),
 		// docc:end
 		uploadAuth: authMW.RequireAuth,
