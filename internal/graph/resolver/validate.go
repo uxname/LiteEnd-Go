@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/vektah/gqlparser/v2/gqlerror"
@@ -18,6 +19,10 @@ import (
 func badInput(msg string) *gqlerror.Error {
 	return clientError(msg, "BAD_USER_INPUT", http.StatusBadRequest)
 }
+
+// blankChars is what a profile field may hold and still count as blank, stored as
+// NULL: the same set as the pattern in UpdateProfile (db/queries/profile.sql).
+const blankChars = " \t\n\v\f\r"
 
 // validateProfileUpdate enforces length and format limits on profile fields
 // before they are persisted (the columns are unbounded TEXT, and URL is a bare
@@ -35,7 +40,8 @@ func validateProfileUpdate(in model.ProfileUpdateInput) error {
 		if utf8.RuneCountInString(*in.AvatarURL) > config.ProfileAvatarURLMaxLen {
 			return badInput(fmt.Sprintf("avatarUrl must be at most %d characters", config.ProfileAvatarURLMaxLen))
 		}
-		if *in.AvatarURL != "" {
+		// A blank avatar is no URL to check: the store clears it to "not set".
+		if strings.Trim(*in.AvatarURL, blankChars) != "" {
 			u, err := url.Parse(*in.AvatarURL)
 			if err != nil || !u.IsAbs() || (u.Scheme != "http" && u.Scheme != "https") {
 				return badInput("avatarUrl must be a valid absolute http(s) URL")

@@ -218,16 +218,37 @@ func TestGraphQL_UpdateProfileAndCacheRefresh(t *testing.T) {
 
 // An empty field means "not set": it is stored as NULL, so the account page falls
 // back to the name from the sign-in provider. A field left out keeps its value.
+// An empty or blank field is stored as not set (NULL); a field left out keeps its
+// value; a non-blank value is stored exactly as sent. The values are read from the
+// mutation's answer: the mock user's `me` re-stamps its own avatar.
 func TestGraphQL_UpdateProfile_EmptyClearsToNull(t *testing.T) {
-	gql(t, `mutation($i:ProfileUpdateInput!){updateProfile(input:$i){displayName}}`,
-		map[string]any{"i": map[string]any{"displayName": "Named", "bio": "kept"}}, nil)
-	gql(t, `mutation($i:ProfileUpdateInput!){updateProfile(input:$i){displayName}}`,
-		map[string]any{"i": map[string]any{"displayName": ""}}, nil)
+	update := func(t *testing.T, in map[string]any) map[string]any {
+		t.Helper()
+		data := gql(t, `mutation($i:ProfileUpdateInput!){updateProfile(input:$i){displayName bio avatarUrl}}`,
+			map[string]any{"i": in}, nil)
+		return data["updateProfile"].(map[string]any)
+	}
+	set := map[string]any{"displayName": "Named", "bio": "About me", "avatarUrl": "https://example.com/a.png"}
 
-	data := gql(t, `{ me { displayName bio } }`, nil, nil)
-	me := data["me"].(map[string]any)
-	require.Nil(t, me["displayName"], "an empty display name is stored as not set")
-	require.Equal(t, "kept", me["bio"], "a field left out keeps its value")
+	for _, field := range []string{"displayName", "bio", "avatarUrl"} {
+		for _, blank := range []string{"", "   ", " \t\n"} {
+			t.Run(field+"="+strconv.Quote(blank), func(t *testing.T) {
+				update(t, set)
+				got := update(t, map[string]any{field: blank})
+				require.Nil(t, got[field], "an empty or blank %s is stored as not set", field)
+				for other, want := range set {
+					if other != field {
+						require.Equal(t, want, got[other], "a field left out keeps its value")
+					}
+				}
+			})
+		}
+	}
+
+	t.Run("a non-blank value is stored as sent", func(t *testing.T) {
+		got := update(t, map[string]any{"displayName": "  Ada  "})
+		require.Equal(t, "  Ada  ", got["displayName"])
+	})
 }
 
 func TestGraphQL_DebugAdminOnly(t *testing.T) {

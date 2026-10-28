@@ -142,9 +142,9 @@ type UpdateParams struct {
 // Update applies a partial update by profile id, then invalidates the cache so
 // subsequent reads reflect the change (prevents stale-cache after update).
 func (s *Service) Update(ctx context.Context, id int32, sub string, in UpdateParams) (sqlc.Profile, error) {
-	// docc:begin profile#^dr9z@qvnt ~j3kq
-	// A nil field keeps its value; an empty one is stored as NULL, "not set" — the SQL
-	// does it (UpdateProfile in db/queries/profile.sql), so every caller gets it.
+	// docc:begin profile#^dr9z@y2ug ~mq55
+	// A nil field keeps its value; an empty or blank one is stored as NULL, "not set" —
+	// the SQL does it (UpdateProfile in db/queries/profile.sql), so every caller gets it.
 	p, err := s.q.UpdateProfile(ctx, sqlc.UpdateProfileParams{
 		ID:          id,
 		AvatarUrl:   in.AvatarURL,

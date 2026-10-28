@@ -72,11 +72,14 @@ const updateProfile = `-- name: UpdateProfile :one
 UPDATE profiles
 SET
     avatar_url   = CASE WHEN $1::text IS NULL THEN avatar_url
-                        ELSE NULLIF($1::text, '') END,
+                        WHEN $1::text ~ '^[ \t\n\v\f\r]*$' THEN NULL
+                        ELSE $1::text END,
     display_name = CASE WHEN $2::text IS NULL THEN display_name
-                        ELSE NULLIF($2::text, '') END,
+                        WHEN $2::text ~ '^[ \t\n\v\f\r]*$' THEN NULL
+                        ELSE $2::text END,
     bio          = CASE WHEN $3::text IS NULL THEN bio
-                        ELSE NULLIF($3::text, '') END
+                        WHEN $3::text ~ '^[ \t\n\v\f\r]*$' THEN NULL
+                        ELSE $3::text END
 WHERE id = $4
 RETURNING id, created_at, updated_at, oidc_sub, roles, avatar_url, display_name, bio
 `
@@ -88,9 +91,12 @@ type UpdateProfileParams struct {
 	ID          int32
 }
 
-// A field left out (NULL) keeps its value; a field sent empty is cleared to NULL —
-// "not set" — so every reader sees one value for it, and the account page falls back
-// to the name from the sign-in provider instead of showing an empty one.
+// A field left out (NULL) keeps its value; a field sent empty or blank (only spaces,
+// tabs, line breaks) is cleared to NULL — "not set" — so every reader sees one value
+// for it, and the account page falls back to the name from the sign-in provider
+// instead of showing an empty one. Any other value is stored exactly as sent, not
+// trimmed. The blank set matches blankChars in internal/graph/resolver/validate.go.
+// A blank value stored before this rule stays until the person edits that field.
 func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (Profile, error) {
 	row := q.db.QueryRow(ctx, updateProfile,
 		arg.AvatarUrl,

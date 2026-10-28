@@ -13,17 +13,23 @@ ON CONFLICT (oidc_sub) DO UPDATE SET oidc_sub = EXCLUDED.oidc_sub
 RETURNING *;
 
 -- name: UpdateProfile :one
--- A field left out (NULL) keeps its value; a field sent empty is cleared to NULL —
--- "not set" — so every reader sees one value for it, and the account page falls back
--- to the name from the sign-in provider instead of showing an empty one.
+-- A field left out (NULL) keeps its value; a field sent empty or blank (only spaces,
+-- tabs, line breaks) is cleared to NULL — "not set" — so every reader sees one value
+-- for it, and the account page falls back to the name from the sign-in provider
+-- instead of showing an empty one. Any other value is stored exactly as sent, not
+-- trimmed. The blank set matches blankChars in internal/graph/resolver/validate.go.
+-- A blank value stored before this rule stays until the person edits that field.
 UPDATE profiles
 SET
     avatar_url   = CASE WHEN sqlc.narg('avatar_url')::text IS NULL THEN avatar_url
-                        ELSE NULLIF(sqlc.narg('avatar_url')::text, '') END,
+                        WHEN sqlc.narg('avatar_url')::text ~ '^[ \t\n\v\f\r]*$' THEN NULL
+                        ELSE sqlc.narg('avatar_url')::text END,
     display_name = CASE WHEN sqlc.narg('display_name')::text IS NULL THEN display_name
-                        ELSE NULLIF(sqlc.narg('display_name')::text, '') END,
+                        WHEN sqlc.narg('display_name')::text ~ '^[ \t\n\v\f\r]*$' THEN NULL
+                        ELSE sqlc.narg('display_name')::text END,
     bio          = CASE WHEN sqlc.narg('bio')::text IS NULL THEN bio
-                        ELSE NULLIF(sqlc.narg('bio')::text, '') END
+                        WHEN sqlc.narg('bio')::text ~ '^[ \t\n\v\f\r]*$' THEN NULL
+                        ELSE sqlc.narg('bio')::text END
 WHERE id = sqlc.arg('id')
 RETURNING *;
 
