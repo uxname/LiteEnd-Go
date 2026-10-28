@@ -216,6 +216,20 @@ func TestGraphQL_UpdateProfileAndCacheRefresh(t *testing.T) {
 	require.Equal(t, "b", me["bio"])
 }
 
+// An empty field means "not set": it is stored as NULL, so the account page falls
+// back to the name from the sign-in provider. A field left out keeps its value.
+func TestGraphQL_UpdateProfile_EmptyClearsToNull(t *testing.T) {
+	gql(t, `mutation($i:ProfileUpdateInput!){updateProfile(input:$i){displayName}}`,
+		map[string]any{"i": map[string]any{"displayName": "Named", "bio": "kept"}}, nil)
+	gql(t, `mutation($i:ProfileUpdateInput!){updateProfile(input:$i){displayName}}`,
+		map[string]any{"i": map[string]any{"displayName": ""}}, nil)
+
+	data := gql(t, `{ me { displayName bio } }`, nil, nil)
+	me := data["me"].(map[string]any)
+	require.Nil(t, me["displayName"], "an empty display name is stored as not set")
+	require.Equal(t, "kept", me["bio"], "a field left out keeps its value")
+}
+
 func TestGraphQL_DebugAdminOnly(t *testing.T) {
 	data := gql(t, `{ debug }`, nil, nil)
 	debug := data["debug"].(map[string]any)

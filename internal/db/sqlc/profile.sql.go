@@ -71,9 +71,12 @@ func (q *Queries) GetProfileByOIDCSub(ctx context.Context, oidcSub string) (Prof
 const updateProfile = `-- name: UpdateProfile :one
 UPDATE profiles
 SET
-    avatar_url   = COALESCE($1, avatar_url),
-    display_name = COALESCE($2, display_name),
-    bio          = COALESCE($3, bio)
+    avatar_url   = CASE WHEN $1::text IS NULL THEN avatar_url
+                        ELSE NULLIF($1::text, '') END,
+    display_name = CASE WHEN $2::text IS NULL THEN display_name
+                        ELSE NULLIF($2::text, '') END,
+    bio          = CASE WHEN $3::text IS NULL THEN bio
+                        ELSE NULLIF($3::text, '') END
 WHERE id = $4
 RETURNING id, created_at, updated_at, oidc_sub, roles, avatar_url, display_name, bio
 `
@@ -85,6 +88,9 @@ type UpdateProfileParams struct {
 	ID          int32
 }
 
+// A field left out (NULL) keeps its value; a field sent empty is cleared to NULL —
+// "not set" — so every reader sees one value for it, and the account page falls back
+// to the name from the sign-in provider instead of showing an empty one.
 func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (Profile, error) {
 	row := q.db.QueryRow(ctx, updateProfile,
 		arg.AvatarUrl,

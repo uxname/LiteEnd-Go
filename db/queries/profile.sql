@@ -13,11 +13,17 @@ ON CONFLICT (oidc_sub) DO UPDATE SET oidc_sub = EXCLUDED.oidc_sub
 RETURNING *;
 
 -- name: UpdateProfile :one
+-- A field left out (NULL) keeps its value; a field sent empty is cleared to NULL —
+-- "not set" — so every reader sees one value for it, and the account page falls back
+-- to the name from the sign-in provider instead of showing an empty one.
 UPDATE profiles
 SET
-    avatar_url   = COALESCE(sqlc.narg('avatar_url'), avatar_url),
-    display_name = COALESCE(sqlc.narg('display_name'), display_name),
-    bio          = COALESCE(sqlc.narg('bio'), bio)
+    avatar_url   = CASE WHEN sqlc.narg('avatar_url')::text IS NULL THEN avatar_url
+                        ELSE NULLIF(sqlc.narg('avatar_url')::text, '') END,
+    display_name = CASE WHEN sqlc.narg('display_name')::text IS NULL THEN display_name
+                        ELSE NULLIF(sqlc.narg('display_name')::text, '') END,
+    bio          = CASE WHEN sqlc.narg('bio')::text IS NULL THEN bio
+                        ELSE NULLIF(sqlc.narg('bio')::text, '') END
 WHERE id = sqlc.arg('id')
 RETURNING *;
 
