@@ -12,7 +12,7 @@ for the 5-minute orientation before anything else.
 - **What you get:** a GraphQL + REST backend with login (OIDC/JWT), user
   profiles, file uploads, background jobs, translations (en/ru), and health
   checks.
-- **Main tools:** Go 1.27 · [chi](https://github.com/go-chi/chi) (router) ·
+- **Main tools:** Go 1.27.3 · [chi](https://github.com/go-chi/chi) (router) ·
   [gqlgen](https://gqlgen.com) (GraphQL) · [pgx](https://github.com/jackc/pgx) +
   [sqlc](https://sqlc.dev) (Postgres) · [goose](https://github.com/pressly/goose)
   (migrations) · [asynq](https://github.com/hibiken/asynq) (jobs, on Redis) ·
@@ -23,7 +23,7 @@ for the 5-minute orientation before anything else.
 **To run the project, pick one path:**
 
 ### Path A — App on host, DB in Docker (recommended for development)
-Requires [Go 1.27+](https://go.dev/dl), Docker, and `task` (or `go-task` on Arch).
+Requires [Go 1.27.3+](https://go.dev/dl), Docker, and `task` (or `go-task` on Arch).
 
 ```bash
 task setup       # one-time: copy .env, hooks, codegen, start DB
@@ -99,7 +99,7 @@ Read [AGENTS.md](AGENTS.md) once you want the deeper "why" behind the rules.
 
 ## Before you start
 
-- **Go 1.27+** and **Task** (on Arch: the `go-task` package) — for Path A, the app
+- **Go 1.27.3+** and **Task** (on Arch: the `go-task` package) — for Path A, the app
   on your host. Path B, everything in Docker, needs neither.
 - **Docker** — for both paths, and for the integration tests.
 
