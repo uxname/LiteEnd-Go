@@ -35,6 +35,7 @@ import (
 	"github.com/uxname/liteend-go/internal/app"
 	"github.com/uxname/liteend-go/internal/config"
 	"github.com/uxname/liteend-go/internal/db"
+	"github.com/uxname/liteend-go/internal/db/sqlc"
 )
 
 var (
@@ -214,6 +215,45 @@ func TestGraphQL_UpdateProfileAndCacheRefresh(t *testing.T) {
 	me := data["me"].(map[string]any)
 	require.Equal(t, "IntTest", me["displayName"], "cache must reflect update, not be stale")
 	require.Equal(t, "b", me["bio"])
+}
+
+// The profile cache on the read path: the mock admin skips it, a named subject
+// (x-mock-sub, the same FindBySub a verified token's lookup shares the cache with)
+// goes through it. A row changed behind the service's back stays invisible until
+// the cache entry goes; a corrupt entry is dropped and the database answers.
+func TestProfileCache_ServesReadsAndDropsACorruptEntry(t *testing.T) {
+	const sub = "cache-read-sub"
+	ctx := t.Context()
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	database, err := db.New(ctx, cfg)
+	require.NoError(t, err)
+	t.Cleanup(database.Close)
+	rdb := goredis.NewClient(&goredis.Options{Addr: net.JoinHostPort(os.Getenv("REDIS_HOST"), os.Getenv("REDIS_PORT"))})
+	t.Cleanup(func() { _ = rdb.Close() })
+	key := config.ProfileCacheKeyPrefix + sub
+
+	p, err := database.Queries.CreateProfile(ctx, sub)
+	require.NoError(t, err)
+	require.NoError(t, rdb.Del(ctx, key).Err())
+	setName := func(name string) {
+		_, err := database.Queries.UpdateProfile(ctx, sqlc.UpdateProfileParams{ID: p.ID, DisplayName: &name})
+		require.NoError(t, err)
+	}
+	displayName := func() any {
+		data := gql(t, `{ me { oidcSub displayName } }`, nil, map[string]string{"x-mock-sub": sub})
+		me := data["me"].(map[string]any)
+		require.Equal(t, sub, me["oidcSub"])
+		return me["displayName"]
+	}
+
+	setName("first")
+	require.Equal(t, "first", displayName(), "a miss reads the database and fills the cache")
+	setName("second")
+	require.Equal(t, "first", displayName(), "a hit is served from the cache, not the database")
+
+	require.NoError(t, rdb.Set(ctx, key, "{not json", time.Minute).Err())
+	require.Equal(t, "second", displayName(), "a corrupt entry falls back to the database")
 }
 
 // An empty field means "not set": it is stored as NULL, so the account page falls
