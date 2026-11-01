@@ -266,7 +266,7 @@ tasks:
       - go mod verify
 
   update:
-    desc: Bump all module + tool deps to latest minor/patch, tidy, regen, then full check (Renovate stays primary)
+    desc: Bump all module + tool deps to latest minor/patch, tidy, regen, then full check (see meta ADR-0012)
     cmds:
       - go get -u ./...
       - go get -u tool        # update tool deps from the tool() block in go.mod (Go 1.24+ meta-pattern)
