@@ -36,7 +36,7 @@ func TestC7_ConcurrentColdStartMigratesOnce(t *testing.T) {
 
 	ctx := context.Background()
 
-	pgC, err := tcpostgres.Run(ctx, "postgres:18.1-alpine",
+	pgC, err := tcpostgres.Run(ctx, "postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5",
 		tcpostgres.WithDatabase("postgres"),
 		tcpostgres.WithUsername("postgres"),
 		tcpostgres.WithPassword("postgres"),

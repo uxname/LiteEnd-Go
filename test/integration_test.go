@@ -52,7 +52,7 @@ var (
 // minio-go. Garage dictates the key shape: the id is "GK" + 24 hex digits, the
 // secret 64 hex digits. All zeros, so no secret scanner mistakes them for real.
 const (
-	s3Image     = "dxflrs/garage:v2.1.0@sha256:4c9b34c113e61358466e83fd6e7d66e6d18657ede14b776eb78a93ee8da7cf6a"
+	s3Image     = "dxflrs/garage:v2.5.0@sha256:677e5b758e4425a325b811c425c026bf35a4bf42f7ddbaa773de3f4fd779a5a5"
 	s3AccessKey = "GK000000000000000000000000"
 	s3SecretKey = "0000000000000000000000000000000000000000000000000000000000000000"
 	s3Bucket    = "uploads"
@@ -85,7 +85,7 @@ func TestMain(m *testing.M) {
 	ctx := context.Background()
 
 	pgC, err := tcpostgres.Run(
-		ctx, "postgres:18.1-alpine",
+		ctx, "postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5",
 		tcpostgres.WithDatabase("postgres"),
 		tcpostgres.WithUsername("postgres"),
 		tcpostgres.WithPassword(pgPassword),
@@ -94,7 +94,7 @@ func TestMain(m *testing.M) {
 		),
 	)
 	must(err)
-	rdC, err := tcredis.Run(ctx, "redis:8-alpine")
+	rdC, err := tcredis.Run(ctx, "redis:8.8-alpine@sha256:ab669f1420eaa05360a417b24f3bd210c9272e2c79a4bb35d3e50b4bfd50dbee")
 	must(err)
 	s3C, err := testcontainers.Run(
 		ctx, s3Image,
