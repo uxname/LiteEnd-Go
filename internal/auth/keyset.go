@@ -123,7 +123,7 @@ func (s *cachedKeySet) refresh(ctx context.Context) error {
 // keyID reads the kid from a compact JWS header, "" when absent or unparsable
 // (the signature check that follows rejects the unparsable ones).
 func keyID(jwt string) string {
-	sig, err := jose.ParseSigned(jwt, []jose.SignatureAlgorithm{jose.RS256, jose.ES384})
+	sig, err := jose.ParseSignedCompact(jwt, []jose.SignatureAlgorithm{jose.RS256, jose.ES384})
 	if err != nil || len(sig.Signatures) == 0 {
 		return ""
 	}
